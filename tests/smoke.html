@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>smoke test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="../vendor/katex/katex.min.js"></script>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 12px; }
+  iframe { width: 1180px; height: 820px; border: 1px solid #ccc; }
+  .pass { color: #138a36; } .fail { color: #d62828; font-weight: 700; }
+  #summary { font-size: 18px; font-weight: 700; }
+</style>
+</head>
+<body>
+<!--
+  自動スモークテスト：python tools/serve.py で起動し http://localhost:8000/tests/smoke.html を開く。
+  合成した Pointer/Touch イベントで実際の入力処理を通し、手書き・消しゴム・Undo・
+  パームリジェクション・ページ移動・保存と復元などを確認する。
+  ヘッドレス実行例:
+    chrome --headless=new --virtual-time-budget=30000 --dump-dom http://localhost:8000/tests/smoke.html
+-->
+<div id="summary">running…</div>
+<ol id="log"></ol>
+<iframe id="f"></iframe>
+<script type="module">
+import { parseLecture, createRenderer, parseArgs } from '../core/content/markdown.js';
+import { textHtml } from '../core/ink/text.js';
+
+const LECTURE = '_test';
+const log = document.getElementById('log');
+const results = [];
+function check(name, ok, detail = '') {
+  results.push({ name, ok: !!ok, detail });
+  const li = document.createElement('li');
+  li.className = ok ? 'pass' : 'fail';
+  li.textContent = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`;
+  log.appendChild(li);
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const frame = document.getElementById('f');
+/** iframe 側で n フレーム進むのを待つ（ウィジェットの再描画は rAF で行われる） */
+const frames = (win, n = 2) => new Promise((resolve) => {
+  const t = setTimeout(resolve, 2000);
+  const step = (k) => win.requestAnimationFrame(() => (k <= 1 ? (clearTimeout(t), resolve()) : step(k - 1)));
+  step(n);
+});
+
+function loadFrame(hash = '', lecture = LECTURE) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout loading lecture')), 15000);
+    frame.onload = async () => {
+      for (let i = 0; i < 200; i++) {
+        if (frame.contentDocument?.documentElement.dataset.ready === '1') { clearTimeout(t); resolve(frame.contentWindow); return; }
+        await sleep(50);
+      }
+    };
+    frame.src = `../lecture.html?l=${lecture}&t=${Date.now()}${hash}`;
+  });
+}
+
+// ---- 合成入力 ----
+function client(win, x, y) {
+  const r = win.__lw.view.pageEl.getBoundingClientRect();
+  const s = r.width / 1024;
+  return { clientX: r.left + x * s, clientY: r.top + y * s };
+}
+let nextId = 100;
+function pointer(win, type, target, x, y, o = {}) {
+  const c = client(win, x, y);
+  const ev = new win.PointerEvent(type, {
+    bubbles: true, cancelable: true, composed: true,
+    pointerId: o.id, pointerType: o.ptype || 'pen', isPrimary: true,
+    clientX: c.clientX, clientY: c.clientY, pressure: o.pressure ?? (type === 'pointerup' ? 0 : 0.3),
+    button: 0, buttons: type === 'pointerup' ? 0 : 1,
+  });
+  target.dispatchEvent(ev);
+  return ev;
+}
+function stroke(win, pts, o = {}) {
+  const id = nextId++;
+  const doc = win.document;
+  const page = win.__lw.view.pageEl;
+  const [x0, y0] = pts[0];
+  const c = client(win, x0, y0);
+  const t0 = doc.elementFromPoint(c.clientX, c.clientY) || page;
+  pointer(win, 'pointerdown', t0, x0, y0, { ...o, id });
+  for (const [x, y] of pts.slice(1)) pointer(win, 'pointermove', page, x, y, { ...o, id });
+  const [xe, ye] = pts[pts.length - 1];
+  pointer(win, 'pointerup', page, xe, ye, { ...o, id });
+}
+function line(x0, y0, x1, y1, n = 20) {
+  return Array.from({ length: n + 1 }, (_, i) => [x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n]);
+}
+function inkPixel(win, kind, x, y) {
+  const v = win.__lw.view;
+  const layer = v.layer(kind);
+  for (const t of layer.tiles.values()) {
+    if (y >= t.box.y0 && y < t.box.y1) {
+      const r = layer.r;
+      const d = t.ctx.getImageData(Math.round(x * r), Math.round((y - t.y0) * r), 1, 1).data;
+      return d[3];
+    }
+  }
+  return -1;
+}
+
+async function run() {
+  // ---- 1. Markdown / 解析 ----
+  const lec = parseLecture('---\ntitle: X\nmacros:\n  \\R: \\mathbb{R}\n---\n@page id=one\n# A\ntext\n---\n# B 見出し\n```\n---\n```\n---\n\n');
+  check('front matter', lec.meta.title === 'X' && lec.meta.macros['\\R'] === '\\mathbb{R}');
+  check('page split (code fence 内の --- は区切らない)', lec.pages.length === 2, `pages=${lec.pages.length}`);
+  check('page id: 明示 / 見出し由来', lec.pages[0].id === 'one' && lec.pages[1].id === 'h:B 見出し', lec.pages.map((p) => p.id).join(','));
+  const r = createRenderer({ macros: { '\\R': '\\mathbb{R}' } });
+  const html = r.md('価格は $5 と $6 です．`$x$` と \\$ と $a_1$ と $\\R$');
+  check('inline math ($5 と $6 は数式にしない)', html.includes('$5') && html.includes('$6'), html.slice(0, 80));
+  check('code span 内は数式にしない', html.includes('<code>$x$</code>'));
+  check('inline math を KaTeX 化', (html.match(/class="katex"/g) || []).length === 2);
+  const pg = r.page('::: def 一次遅れ\n- $T$\n:::\n@widget foo tau=2 label="a b"\n@space 120 grid');
+  check('container/box', pg.includes('lw-box-def') && pg.includes('定義'));
+  check('@widget opts', pg.includes('data-widget="foo"') && pg.includes('&quot;tau&quot;:2'));
+  check('@space', pg.includes('lw-space-grid') && pg.includes('height:120px'));
+  const a = parseArgs('name x=1 y="a b" flag');
+  check('parseArgs', a._[0] === 'name' && a.x === 1 && a.y === 'a b' && a._[1] === 'flag');
+  check('テキストの数式（$..$ は KaTeX、\\$ と HTML はそのまま）',
+    /class="katex"/.test(textHtml('a $x$ b', r)) && textHtml('\\$5 と $6 <b>', r) === '$5 と $6 &lt;b&gt;');
+
+  // ---- 2. 起動（保存データを消してから） ----
+  let win = await loadFrame('#1');
+  await win.__lw.store.clearLecture(LECTURE);
+  win = await loadFrame('#1');
+  const lw = () => win.__lw;
+  check('起動・3ページ', lw().book.length === 3);
+  check('KaTeX 描画', !!win.document.querySelector('.lw-content .katex'));
+  check('KaTeX マクロ (\\R)', !!win.document.querySelector('.lw-content .mathbb, .lw-content .amsrm'));
+
+  // ---- 3. ペン ----
+  lw().settings.set('tool', 'pen');
+  stroke(win, line(100, 400, 500, 400));
+  let strokes = lw().view.page.state.strokes;
+  check('ペンでストローク作成', strokes.length === 1 && strokes[0].t === 'pen', `n=${strokes.length}`);
+  check('点が記録される', strokes[0]?.p.length >= 3 * 15, `len=${strokes[0]?.p.length}`);
+  check('キャンバスに描画', inkPixel(win, 'pen', 300, 400) > 0, `alpha=${inkPixel(win, 'pen', 300, 400)}`);
+  check('筆圧が記録される', strokes[0].p[2] > 0 && strokes[0].p[2] <= 1);
+
+  // ---- 4. パームリジェクション ----
+  let received = 0;
+  const contentEl = win.document.querySelector('.lw-content');
+  contentEl.addEventListener('pointerdown', () => received++);
+  pointer(win, 'pointerdown', contentEl, 600, 200, { id: 999, ptype: 'touch' });
+  check('ペン直後の指タッチは無視（パームリジェクション）', received === 0);
+  await sleep(600);
+  pointer(win, 'pointerdown', contentEl, 600, 200, { id: 998, ptype: 'touch' });
+  pointer(win, 'pointerup', contentEl, 600, 200, { id: 998, ptype: 'touch' });
+  check('一定時間後の指タッチは教材に届く', received === 1);
+  check('指タッチでは書かれない', lw().view.page.state.strokes.length === 1);
+
+  // ---- 5. Undo / Redo ----
+  lw().view.undo();
+  check('Undo', lw().view.page.state.strokes.length === 0 && inkPixel(win, 'pen', 300, 400) === 0);
+  lw().view.redo();
+  check('Redo', lw().view.page.state.strokes.length === 1 && inkPixel(win, 'pen', 300, 400) > 0);
+
+  // ---- 6. 消しゴム（部分） ----
+  lw().settings.set('tool', 'eraser');
+  lw().settings.set('eraserMode', 'partial');
+  stroke(win, line(300, 370, 300, 430, 6));
+  strokes = lw().view.page.state.strokes;
+  check('部分消しゴムで 2 本に分割', strokes.length === 2, `n=${strokes.length}`);
+  check('消した部分のピクセルが消える', inkPixel(win, 'pen', 300, 400) === 0);
+  check('残りは残る', inkPixel(win, 'pen', 150, 400) > 0 && inkPixel(win, 'pen', 450, 400) > 0);
+  lw().view.undo();
+  check('部分消去の Undo で 1 本に戻る', lw().view.page.state.strokes.length === 1 && inkPixel(win, 'pen', 300, 400) > 0);
+
+  // ---- 7. 消しゴム（ストローク） ----
+  lw().settings.set('eraserMode', 'stroke');
+  stroke(win, line(200, 380, 200, 420, 4));
+  check('ストローク消しゴム', lw().view.page.state.strokes.length === 0 && inkPixel(win, 'pen', 450, 400) === 0);
+  lw().view.undo();
+
+  // ---- 8. 蛍光ペン ----
+  lw().settings.set('tool', 'hl');
+  stroke(win, line(100, 250, 400, 250));
+  const hl = lw().view.page.state.strokes.at(-1);
+  check('蛍光ペン', hl?.t === 'hl' && inkPixel(win, 'hl', 250, 250) > 0);
+  check('蛍光ペンは乗算合成のレイヤー', win.getComputedStyle(lw().view.hl.el).mixBlendMode === 'multiply');
+
+  // ---- 9. 操作ツールでは書かない ----
+  lw().settings.set('tool', 'hand');
+  const before = lw().view.page.state.strokes.length;
+  stroke(win, line(100, 500, 300, 500));
+  check('操作ツールではペンで書かない', lw().view.page.state.strokes.length === before);
+  lw().settings.set('tool', 'pen');
+
+  // ---- 9b. 指で書く（指＝touch はふだん書かない。設定 ON のときだけ書く） ----
+  await sleep(600); // パームリジェクションの猶予が切れるのを待つ
+  const n0 = lw().view.page.state.strokes.length;
+  stroke(win, line(100, 560, 300, 560), { ptype: 'touch' });
+  check('指タッチは既定では書かない', lw().view.page.state.strokes.length === n0);
+  lw().settings.set('fingerDraw', true);
+  stroke(win, line(100, 560, 300, 560), { ptype: 'touch' });
+  check('「指でも書く」ON なら指で書ける', lw().view.page.state.strokes.length === n0 + 1 && inkPixel(win, 'pen', 200, 560) > 0);
+  lw().settings.set('fingerDraw', false);
+  lw().view.undo();
+
+  // ---- 9c. レーザーポインタ（保存されず、数秒で消える） ----
+  lw().settings.set('tool', 'laser');
+  lw().settings.set('laserMode', 'trail');
+  const nL = lw().view.page.state.strokes.length;
+  const uL = lw().view.page.history.undoStack.length;
+  const laserCanvas = lw().view.laser.canvas;
+  stroke(win, line(150, 620, 450, 620));
+  await frames(win, 2);
+  const lr = lw().view.laser.geom;
+  const laserAlpha = () => {
+    const g = lw().view.laser.geom;
+    return laserCanvas.getContext('2d').getImageData(Math.round(300 * g.r), Math.round((620 - g.top) * g.r), 1, 1).data[3];
+  };
+  check('レーザー（軌跡）は書き込み・Undo 履歴にならない', lw().view.page.state.strokes.length === nL && lw().view.page.history.undoStack.length === uL);
+  check('レーザーの軌跡が表示される', laserAlpha() > 0, `alpha=${laserAlpha()} r=${lr.r}`);
+  const a0 = laserAlpha();
+  await sleep(300);
+  check('離して 0.3 秒後はまだ表示', laserAlpha() > 0 && lw().view.laser.strokes.length === 1);
+  await sleep(600);
+  await frames(win, 1);
+  const aFade = laserAlpha();
+  stroke(win, line(150, 660, 450, 660));
+  await frames(win, 2);
+  check('消えかけで書き始めると軌跡が元に戻る', aFade > 0 && aFade < a0 && laserAlpha() >= a0 - 1 && lw().view.laser.strokes.length === 2,
+    `a0=${a0} fade=${aFade} after=${laserAlpha()} n=${lw().view.laser.strokes.length}`);
+  await sleep(1600);
+  await frames(win, 2);
+  check('数秒後に消える', laserAlpha() === 0 && lw().view.laser.strokes.length === 0);
+  lw().settings.set('laserMode', 'dot');
+  stroke(win, line(150, 620, 200, 620, 4));
+  await sleep(500);
+  await frames(win, 2);
+  check('レーザー（点）も離すと消える', !lw().view.laser.active && lw().view.page.state.strokes.length === nL);
+  lw().settings.set('laserMode', 'trail');
+
+  // ---- 9d. テキスト ----
+  lw().settings.set('tool', 'text');
+  const TL = () => lw().view.texts;
+  const texts = () => lw().view.page.state.texts;
+  const tEl = () => win.document.querySelector('.lw-page .lw-text');
+  const tapText = () => { const b = tEl(); stroke(win, [[b.offsetLeft + 20, b.offsetTop + b.offsetHeight / 2]]); };
+  const nS = lw().view.page.state.strokes.length;
+  stroke(win, [[600, 470]]);
+  check('テキスト：タップで入力欄', !!TL().editor && win.document.activeElement === TL().editor.ta);
+  TL().editor.ta.value = '答え $x^2$';
+  TL().editor.ta.dispatchEvent(new win.Event('input'));
+  stroke(win, [[150, 120]]);   // 入力欄の外をタップ → 確定のみ（新しい入力欄は開かない）
+  check('テキスト：外をタップで確定・数式も表示', texts().length === 1 && texts()[0].v === '答え $x^2$' && !TL().editor && !!tEl()?.querySelector('.katex'));
+  check('テキストはストロークとは別（ストローク数は不変）', lw().view.page.state.strokes.length === nS);
+  lw().view.undo();
+  check('テキスト：Undo', texts().length === 0 && !tEl());
+  lw().view.redo();
+  check('テキスト：Redo', texts().length === 1 && !!tEl());
+  const tx0 = texts()[0].x, ty0 = texts()[0].y;
+  const tb = tEl();
+  const tcx = tb.offsetLeft + 20, tcy = tb.offsetTop + tb.offsetHeight / 2;
+  stroke(win, line(tcx, tcy, tcx + 100, tcy + 50, 5));
+  check('テキスト：ドラッグで移動', Math.abs(texts()[0].x - tx0 - 100) < 0.2 && Math.abs(texts()[0].y - ty0 - 50) < 0.2 && !TL().editor,
+    `${tx0},${ty0} -> ${texts()[0].x},${texts()[0].y}`);
+  lw().view.undo();
+  check('テキスト：移動の Undo', texts()[0].x === tx0 && texts()[0].y === ty0 && tEl().offsetLeft === tx0);
+  tapText();
+  check('テキスト：既存の文字をタップで編集', !!TL().editor && TL().editor.ta.value === '答え $x^2$');
+  lw().settings.set('textColor', '#d62828');
+  TL().editor.ta.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  check('テキスト：編集中に色を変えて Esc で確定', !TL().editor && texts().length === 1 && texts()[0].c === '#d62828');
+  tapText();
+  TL().editor.ta.value = '';
+  stroke(win, [[150, 120]]);
+  check('テキスト：空にすると削除', texts().length === 0 && !tEl());
+  lw().view.undo();
+  check('テキスト：削除の Undo', texts().length === 1 && !!tEl());
+  lw().settings.set('textColor', '#1b1b1f');
+  lw().settings.set('tool', 'pen');
+
+  // ---- 10. 全消去と Undo ----
+  lw().view.clearPage();
+  check('ページ全消去（テキストも）', lw().view.page.state.strokes.length === 0 && lw().view.page.state.texts.length === 0);
+  lw().view.undo();
+  check('全消去の Undo', lw().view.page.state.strokes.length === 2 && lw().view.page.state.texts.length === 1 && !!win.document.querySelector('.lw-page .lw-text'));
+
+  // ---- 11. ページ移動・ウィジェット ----
+  lw().view.show(1);
+  await sleep(100);
+  const probe = win.__probe;
+  check('ウィジェット初期化', !!probe && probe.renders >= 1);
+  stroke(win, line(150, 300, 400, 330));
+  const pageB = lw().view.page;
+  check('ページ B に書き込み', pageB.state.strokes.length === 1);
+  const r0 = probe.renders;
+  probe.a.value = 0.9;
+  await frames(win, 3);
+  check('スライダー変更で再描画', probe.renders > r0 && probe.a.value === 0.9);
+  check('グラフ更新後も書き込みが残る', pageB.state.strokes.length === 1 && inkPixel(win, 'pen', 275, 315) > 0);
+  // スライダーの操作部はペンでも書かずに操作できる
+  const track = win.document.querySelector('.lw-slider-track');
+  const tr = track.getBoundingClientRect();
+  const id = nextId++;
+  track.dispatchEvent(new win.PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: id, pointerType: 'pen', isPrimary: true, clientX: tr.left + 2, clientY: tr.top + tr.height / 2, pressure: 0.3, buttons: 1 }));
+  track.dispatchEvent(new win.PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: id, pointerType: 'pen', isPrimary: true, clientX: tr.left + 2, clientY: tr.top + tr.height / 2, pressure: 0, buttons: 0 }));
+  check('操作パネル上のペンはスライダーを操作', probe.a.value === 0 && pageB.state.strokes.length === 1, `a=${probe.a.value}`);
+  // グラフ上の点はペンでも真上からならドラッグ
+  const hd = probe.hd;
+  const cv = probe.p.canvas;
+  const cr = cv.getBoundingClientRect();
+  const sc = cr.width / probe.p.width;
+  const hx = cr.left + probe.p.X(hd.x) * sc, hy = cr.top + probe.p.Y(hd.y) * sc;
+  const id2 = nextId++;
+  const opt = (x, y, b) => ({ bubbles: true, cancelable: true, pointerId: id2, pointerType: 'pen', isPrimary: true, clientX: x, clientY: y, pressure: b ? 0.3 : 0, buttons: b });
+  cv.dispatchEvent(new win.PointerEvent('pointerdown', opt(hx, hy, 1)));
+  cv.dispatchEvent(new win.PointerEvent('pointermove', opt(hx + 40 * sc, hy, 1)));
+  cv.dispatchEvent(new win.PointerEvent('pointerup', opt(hx + 40 * sc, hy, 0)));
+  check('グラフ上の点をドラッグ', hd.x > 0.55 && pageB.state.strokes.length === 1, `x=${hd.x.toFixed(3)}`);
+
+  lw().view.show(0);
+  check('ページ A に戻ると書き込みが残る', lw().view.page.state.strokes.length === 2 && inkPixel(win, 'pen', 450, 400) > 0);
+
+  // ---- 回転（画面サイズの変更）で教材と書き込みがずれない ----
+  lw().view.show(2); // 中央寄せ（layout=title）のページ
+  stroke(win, line(200, 150, 400, 150));
+  const h1 = win.document.querySelector('.lw-content h1');
+  const before1 = { x: h1.offsetLeft, y: h1.offsetTop, s: lw().view.scale };
+  frame.style.width = '820px';
+  frame.style.height = '1180px';
+  await frames(win, 3);
+  lw().view.layout();
+  const after1 = { x: h1.offsetLeft, y: h1.offsetTop, s: lw().view.scale };
+  check('回転しても教材の論理位置は不変', before1.x === after1.x && before1.y === after1.y && before1.s !== after1.s,
+    `${JSON.stringify(before1)} -> ${JSON.stringify(after1)}`);
+  check('回転後も書き込みを同じ論理位置に描画', inkPixel(win, 'pen', 300, 150) > 0);
+  // 画面上でも教材と書き込みの相対位置が保たれているか（拡大率のみ変化）
+  const hr = h1.getBoundingClientRect();
+  const pr = lw().view.pageEl.getBoundingClientRect();
+  check('画面座標でも相対位置が一致', Math.abs((hr.top - pr.top) / lw().view.scale - before1.y) < 1.5);
+  frame.style.width = '';
+  frame.style.height = '';
+  await frames(win, 3);
+  lw().view.layout();
+  lw().view.undo();
+  lw().view.show(0);
+
+  // ---- 12. 白紙ページ・拡張 ----
+  lw().view.addBlankPage('grid');
+  check('白紙ページ追加', lw().book.length === 4 && lw().view.index === 1 && lw().view.page.kind === 'blank');
+  check('白紙ページの背景', lw().view.pageEl.dataset.bg === 'grid');
+  stroke(win, line(100, 100, 300, 120));
+  const H0 = lw().view.H;
+  lw().view.extend();
+  check('板書スペース拡張', lw().view.H > H0, `${H0} -> ${lw().view.H}`);
+  const yLow = lw().view.H - 60;
+  lw().view.stage.scrollTop = lw().view.stage.scrollHeight;
+  lw().view.updateTiles();
+  stroke(win, line(100, yLow, 400, yLow));
+  check('拡張部分に書ける', lw().view.page.state.strokes.length === 2 && inkPixel(win, 'pen', 250, yLow) > 0);
+
+  // ---- 12b. PDF 出力（印刷用レイアウト） ----
+  const sheets = await lw().exportPdf({ keep: true });
+  const pv = win.document.getElementById('lw-print');
+  check('PDF 出力：印刷用レイアウトを作成', !!pv && sheets >= lw().book.length + 1, `sheets=${sheets} pages=${lw().book.length}`);
+  check('PDF 出力：書き込みは SVG（ベクター）', pv.querySelectorAll('svg.lw-print-ink path').length > 0);
+  check('PDF 出力：グラフは画像化', [...pv.querySelectorAll('img.lw-surface-canvas')].some((i) => i.src.startsWith('data:image/png')));
+  check('PDF 出力：数式は複製（ベクター）', pv.querySelectorAll('.katex').length > 0);
+  check('PDF 出力：テキストも出力', pv.querySelectorAll('.lw-print-page .lw-text .katex').length > 0);
+  pv.remove();
+  win.document.body.classList.remove('lw-printing');
+
+  // ---- 13. 保存と復元 ----
+  await lw().book.flush();
+  const blankId = lw().view.page.id;
+  win = await loadFrame('#1');
+  check('再読み込み後もページ数を維持', lw().book.length === 4);
+  const pa = lw().book.pages[0];
+  const pblank = lw().book.pages[1];
+  check('再読み込み後に書き込みを復元（教材ページ）', pa.state.strokes.length === 2, `n=${pa.state.strokes.length}`);
+  check('再読み込み後に白紙ページと書き込みを復元', pblank.id === blankId && pblank.state.strokes.length === 2 && pblank.state.extra > 0);
+  check('復元した書き込みを描画', inkPixel(win, 'pen', 450, 400) > 0);
+  check('再読み込み後にテキストを復元', pa.state.texts.length === 1 && !!win.document.querySelector('.lw-page .lw-text .katex'));
+
+  // ---- 14. 書き出し・読み込み ----
+  const data = lw().book.exportData();
+  check('書き出し形式', data.format === 'lecture-web-ink' && Object.keys(data.pages).length >= 3);
+  await lw().book.importData({ ...data, pages: { a: data.pages.a } , meta: { added: [] } });
+  win = await loadFrame('#1');
+  check('読み込みで置き換え', lw().book.length === 3 && lw().book.pages[0].state.strokes.length === 2 && lw().book.pages[0].state.texts.length === 1 && lw().book.pages[1].state.strokes.length === 0);
+
+  // ---- 15. 白紙ページの削除 ----
+  lw().view.addBlankPage();
+  lw().view.deletePage(lw().view.index);
+  check('白紙ページ削除', lw().book.length === 3);
+
+  await lw().store.clearLecture(LECTURE);
+
+  // ---- 16. PDF 教材の読み込み（@pdf test.pdf pages=2-3 id=t + Markdown 1 ページ） ----
+  win = await loadFrame('#1', '_test_pdf');
+  await lw().store.clearLecture('_test_pdf');
+  win = await loadFrame('#1', '_test_pdf');
+  const ids = lw().book.pages.map((p) => p.id).join(',');
+  check('PDF のページを展開（範囲指定・ID）', ids === 't-2,t-3,md', ids);
+  const pdfCanvas = (id) => lw().view.contents.get(id)?.pdfCanvas;
+  for (let i = 0; i < 80 && !(pdfCanvas('t-2')?.width > 0 && pdfCanvas('t-3')?.width > 0); i++) await sleep(100);
+  const nonWhite = (cv) => {
+    if (!cv || !cv.width) return false;
+    const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    for (let i = 0; i < d.length; i += 4 * 97) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) return true;
+    return false;
+  };
+  check('PDF ページを描画', nonWhite(pdfCanvas('t-2')), `w=${pdfCanvas('t-2')?.width}`);
+  check('次のページを先に描画しておく', pdfCanvas('t-3')?.width > 0);
+  check('PDF ページの論理サイズ（16:9 → 1024×576）', lw().view.contents.get('t-2').el.offsetHeight === 576);
+  lw().settings.set('tool', 'pen');
+  stroke(win, line(100, 300, 600, 300));
+  check('PDF ページに書き込める', lw().view.page.state.strokes.length === 1 && inkPixel(win, 'pen', 350, 300) > 0);
+  lw().view.show(2);
+  lw().view.show(0);
+  check('PDF ページの書き込みが残る', lw().view.page.state.strokes.length === 1);
+  const sheets2 = await lw().exportPdf({ keep: true });
+  const pr2 = win.document.getElementById('lw-print');
+  check('PDF 教材も PDF 出力できる', sheets2 === 3 && [...pr2.querySelectorAll('img.lw-pdf-canvas')].filter((i) => i.src.startsWith('data:image/jpeg')).length === 2, `sheets=${sheets2}`);
+  pr2.remove();
+  win.document.body.classList.remove('lw-printing');
+  await lw().book.flush();
+  await lw().store.clearLecture('_test_pdf');
+}
+
+run().catch((e) => check('例外なく完了', false, e.stack || e.message)).finally(() => {
+  const failed = results.filter((r) => !r.ok).length;
+  const s = document.getElementById('summary');
+  s.textContent = failed ? `FAILED ${failed} / ${results.length}` : `ALL PASSED ${results.length}`;
+  s.className = failed ? 'fail' : 'pass';
+  document.title = failed
+    ? `FAIL ${failed}/${results.length}: ` + results.filter((r) => !r.ok).map((r) => `${r.name} ${r.detail}`.slice(0, 160)).join(' | ')
+    : `PASS ${results.length}`;
+});
+</script>
+</body>
+</html>

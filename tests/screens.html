@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>screens</title>
+<style>html, body { margin: 0; background: #888; } iframe { border: 0; display: block; }</style>
+</head>
+<body>
+<!--
+  見た目確認用：講義を指定サイズの iframe で開き、UI の状態を再現する。
+    tests/screens.html?l=demo/first-order-lag&p=6&w=820&h=1180&state=menu
+  state: compact | menu | overview | eraser | hl | hand | laser | text | ink（サンプルの書き込みを描く）
+-->
+<iframe id="f"></iframe>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const f = document.getElementById('f');
+f.style.width = (q.get('w') || 1180) + 'px';
+f.style.height = (q.get('h') || 820) + 'px';
+f.src = `../lecture.html?l=${q.get('l') || 'demo/first-order-lag'}#${q.get('p') || 1}`;
+f.onload = async () => {
+  const win = f.contentWindow;
+  for (let i = 0; i < 200 && win.document.documentElement.dataset.ready !== '1'; i++) await new Promise((r) => setTimeout(r, 50));
+  const lw = win.__lw;
+  for (const st of (q.get('state') || '').split(',').filter(Boolean)) {
+    if (st === 'compact') lw.settings.set('compact', true);
+    if (['eraser', 'hl', 'hand', 'laser', 'text'].includes(st)) lw.settings.set('tool', st);
+    if (st === 'menu') win.document.querySelector('.lw-tb-btn[title="メニュー"]').click();
+    if (st === 'overview') win.document.querySelector('.lw-tb-pageno').click();
+    if (st === 'ink') {
+      // 合成した手書き（波線）と蛍光ペンを直接データとして追加して描画
+      const page = lw.view.page;
+      const wave = []; for (let i = 0; i <= 120; i++) { const x = 120 + i * 5; wave.push(x, 300 + 30 * Math.sin(i / 8), 0.1 + 0.3 * Math.abs(Math.sin(i / 20))); }
+      page.state.strokes.push({ id: 'w1', t: 'pen', c: '#d62828', w: 2.6, p: wave.map((v) => Math.round(v * 100) / 100) });
+      page.state.strokes.push({ id: 'h1', t: 'hl', c: '#fff176', w: 20, p: [100, 210, 0.25, 600, 210, 0.25] });
+      lw.view.redrawInk(null);
+    }
+  }
+  document.title = 'READY';
+};
+</script>
+</body>
+</html>

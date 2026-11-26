@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Lectoryx</title>
+  <rect width="512" height="512" rx="112" fill="#1b2335"/>
+  <path d="M150 118 V388 H290" fill="none" stroke="#f4f6fb" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M268 172 L384 288 M384 172 L268 288" fill="none" stroke="#a9c7ff" stroke-width="38" stroke-linecap="round"/>
+  <circle cx="386" cy="386" r="24" fill="#5b9bff"/>
+</svg>

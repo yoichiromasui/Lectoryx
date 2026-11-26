@@ -1,0 +1,26 @@
+# 生成物（GitHub Actions が作る）
+_site/
+_content/
+lectures/catalog.json
+
+# 授業の教材（別の非公開リポジトリ。このフォルダの中に置くが Lectoryx には入れない）
+/courses/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS・エディタ
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# 個人設定・認証情報（リポジトリに入れない）
+.claude/settings.local.json
+.env
+.env.*
+*.pem
+app_deploy
+app_deploy.pub

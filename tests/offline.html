@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>offline test</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 12px; }
+  iframe { width: 1180px; height: 820px; border: 1px solid #ccc; }
+  .pass { color: #138a36; } .fail { color: #d62828; font-weight: 700; }
+  #summary { font-size: 18px; font-weight: 700; }
+</style>
+</head>
+<body>
+<!--
+  オフライン動作の自動テスト（Phase 4）：python tools/serve.py で起動し
+  http://localhost:8000/tests/offline.html を開く（Service Worker が動く localhost で）。
+  1. 配信元から教材一覧を取得し、教材をダウンロード
+  2. Service Worker の「テスト用オフライン」（ネットワークを一切使わない）にして、
+     ライブラリ・講義画面・数式・画像・PDF・ウィジェット・書き込み・再読み込み後の復元を確認
+  3. 教材の更新（書き込みのあるページが変わる → 旧版を残す）、更新の失敗、旧版の削除
+  4. バックアップ（.zip）と復元
+  終わると教材・書き込みを消して元に戻す。タイトルが PASS n / FAIL ... になる。
+-->
+<div id="summary">running…</div>
+<ol id="log"></ol>
+<iframe id="f"></iframe>
+<script type="module">
+import { openStore } from '../core/store.js';
+import { downloadLecture, removeLecture, removeVersion, cleanupCaches, LEC_CACHE, verifyVersion, changedInkedPages, pageSignatures } from '../core/library/download.js';
+import { createBackup, inspectBackup, restoreBackup } from '../core/library/backup.js';
+import { readZip } from '../core/library/zip.js';
+
+const CTRL = 'demo/first-order-lag';
+const DEMO = 'demo/pdf-slides';
+const results = [];
+const log = document.getElementById('log');
+function check(name, ok, detail = '') {
+  results.push({ name, ok: !!ok, detail });
+  const li = document.createElement('li');
+  li.className = ok ? 'pass' : 'fail';
+  li.textContent = `${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`;
+  log.appendChild(li);
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const frame = document.getElementById('f');
+
+function load(url, cond = (w) => w.document.documentElement.dataset.ready === '1') {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout: ' + url)), 20000);
+    frame.onload = async () => {
+      for (let i = 0; i < 300; i++) {
+        try { if (cond(frame.contentWindow)) { clearTimeout(t); resolve(frame.contentWindow); return; } } catch { /* 読み込み中 */ }
+        await sleep(50);
+      }
+    };
+    // 同じ URL でも必ず読み込み直す（#ページ番号の前に一意な値を付ける）
+    const [u, hash] = url.split('#');
+    frame.src = `${u}${u.includes('?') ? '&' : '?'}t=${Date.now()}${hash ? '#' + hash : ''}`;
+  });
+}
+async function until(fn, ms = 15000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try { if (await fn()) return true; } catch { /* 待つ */ }
+    await sleep(100);
+  }
+  return false;
+}
+async function sw(msg) {
+  const ctl = navigator.serviceWorker.controller;
+  const ch = new MessageChannel();
+  const p = new Promise((r) => { ch.port1.onmessage = (e) => r(e.data); setTimeout(() => r(null), 3000); });
+  ctl.postMessage(msg, [ch.port2]);
+  return p;
+}
+function stroke(win, pts) {
+  const page = win.__lw.view.pageEl;
+  const r = page.getBoundingClientRect();
+  const s = r.width / 1024;
+  const id = 900 + Math.floor(Math.random() * 1000);
+  const ev = (type, [x, y]) => page.dispatchEvent(new win.PointerEvent(type, {
+    bubbles: true, cancelable: true, pointerId: id, pointerType: 'pen', isPrimary: true,
+    clientX: r.left + x * s, clientY: r.top + y * s, pressure: type === 'pointerup' ? 0 : 0.3, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+  }));
+  ev('pointerdown', pts[0]);
+  for (const p of pts.slice(1)) ev('pointermove', p);
+  ev('pointerup', pts[pts.length - 1]);
+}
+const line = (x0, y0, x1, y1, n = 20) => Array.from({ length: n + 1 }, (_, i) => [x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n]);
+const frames = (win, n = 3) => new Promise((resolve) => {
+  const step = (k) => win.requestAnimationFrame(() => (k <= 1 ? resolve() : step(k - 1)));
+  step(n);
+});
+
+async function run() {
+  const store = await openStore();
+  // ---- 0. 準備（Service Worker の制御・前回の残りを消す） ----
+  await navigator.serviceWorker.register('../sw.js', { scope: '../', updateViaCache: 'none' });
+  const reg = await navigator.serviceWorker.ready;
+  await reg.update().catch(() => {});
+  await until(() => !reg.installing && !reg.waiting, 30000);
+  check('Service Worker がこのページを制御', await until(() => !!navigator.serviceWorker.controller, 15000));
+  await sw({ type: 'test-offline', on: false });
+  for (const p of [CTRL, DEMO]) await removeLecture(store, p, { ink: true });
+  await cleanupCaches(store);
+
+  // ---- 1. 教材一覧とダウンロード（オンライン） ----
+  let win = await load('../index.html');
+  const lib = win.__lib;
+  await lib.refreshCatalog({ quiet: true });
+  const cat = lib.S.catalog?.data;
+  check('教材一覧（catalog.json）を取得', cat?.format === 'lecture-web-catalog' && cat.lectures.some((e) => e.id === CTRL) && cat.lectures.some((e) => e.id === DEMO));
+  const entry = cat.lectures.find((e) => e.id === CTRL);
+  const demo = cat.lectures.find((e) => e.id === DEMO);
+  check('一覧に「未ダウンロード」と表示', !!win.document.querySelector(`.lib-row.st-none[data-id="${CTRL}"]`));
+  lib.download([CTRL, DEMO]);
+  check('ダウンロード中の状態を表示', !!win.document.querySelector('.lib-row.st-downloading, .lib-row.st-queued'));
+  const ok = await until(async () => (await store.getRecord(CTRL))?.current === entry.version && (await store.getRecord(DEMO))?.current === demo.version, 30000);
+  check('2 つの教材をダウンロード', ok);
+  check('すべてのファイルが端末にある（サイズ・ハッシュ一致）', await verifyVersion(entry.version, entry) && await verifyVersion(demo.version, demo));
+  await until(() => win.document.querySelector(`.lib-row.st-ready[data-id="${CTRL}"]`));
+  check('一覧に「オフライン可」と表示', !!win.document.querySelector(`.lib-row.st-ready[data-id="${CTRL}"]`));
+  // 動画などの部分取得（Range）：Safari は <video> で必ず使う
+  const vurl = new URL(`../offline/${entry.version}/${CTRL}/media/test.mp4`, location.href).href;
+  await (await caches.open(LEC_CACHE(entry.version))).put(vurl, new Response(new Uint8Array(1000).map((_, i) => i % 256), { headers: { 'Content-Type': 'video/mp4' } }));
+  const rr = await fetch(vurl, { headers: { Range: 'bytes=100-199' } });
+  const rb = new Uint8Array(await rr.arrayBuffer());
+  check('動画の部分取得（206 Partial Content）', rr.status === 206 && rb.length === 100 && rb[0] === 100 && rr.headers.get('Content-Range') === 'bytes 100-199/1000',
+    `${rr.status} ${rr.headers.get('Content-Range')}`);
+  const rr2 = await fetch(vurl, { headers: { Range: 'bytes=900-' } });
+  check('動画の部分取得（末尾まで）', rr2.status === 206 && (await rr2.arrayBuffer()).byteLength === 100);
+
+  // ---- 2. ここからネットワークなし ----
+  check('テスト用オフラインに切り替え', (await sw({ type: 'test-offline', on: true }))?.testOffline === true);
+  const netFail = await fetch('../lectures/catalog.json', { cache: 'no-store' }).then(() => false, () => true);
+  check('オフライン中は配信元に接続できない', netFail);
+
+  win = await load('../index.html');
+  await until(() => win.document.querySelectorAll('.lib-row').length >= 2);
+  check('オフラインでライブラリが起動・一覧を表示', win.document.querySelectorAll('.lib-row.st-ready').length >= 2);
+
+  win = await load(`../lecture.html?l=${CTRL}#6`);
+  const lw = () => win.__lw;
+  check('オフラインで講義を開く（端末内の版から）', lw().lecture.base.includes(`/offline/${entry.version}/`), lw().lecture.base);
+  check('数式（KaTeX）を表示', !!win.document.querySelector('.lw-content .katex'));
+  const fontsOk = await win.document.fonts.ready.then(() => [...win.document.fonts].some((f) => /KaTeX/.test(f.family) && f.status === 'loaded'));
+  check('数式フォントもオフラインで読み込み', fontsOk);
+  const c6 = lw().view.contents.get(lw().view.page.id);
+  const wdg = c6.widgets[0];
+  check('ウィジェット（スライダー＋グラフ）を初期化', !!wdg && wdg._params.length >= 1 && !!win.document.querySelector('.lw-display canvas'));
+  wdg._params[0].value = 3;
+  await frames(win, 3);
+  check('スライダーの値を保存', JSON.stringify(lw().view.page.state.widgets).includes('3'));
+  stroke(win, line(150, 520, 500, 540));
+  check('オフラインで書き込める', lw().view.page.state.strokes.length === 1);
+  await lw().book.flush();
+
+  win = await load(`../lecture.html?l=${CTRL}#6`);
+  const c6b = lw().view.contents.get(lw().view.page.id);
+  check('再読み込み後に書き込みを復元', lw().view.page.state.strokes.length === 1);
+  check('再読み込み後に数値実験の値を復元', c6b.widgets[0]._params[0].value === 3, `value=${c6b.widgets[0]._params[0].value}`);
+  lw().view.show(1);
+  const img = win.document.querySelector('.lw-content img');
+  await until(() => img?.complete);
+  check('画像（SVG）をオフラインで表示', img && img.naturalWidth > 0, img?.src);
+  // 閲覧位置
+  lw().view.show(9);
+  win.dispatchEvent(new Event('pagehide'));
+  await lw().book.flush();
+  win = await load(`../lecture.html?l=${CTRL}`);
+  check('前回のページを開く（閲覧位置の保存）', lw().view.index === 9, `index=${lw().view.index}`);
+
+  win = await load(`../lecture.html?l=${DEMO}#1`);
+  const pdfCv = () => lw().view.contents.get(lw().view.page.id)?.pdfCanvas;
+  check('PDF 教材をオフラインで描画', await until(() => pdfCv()?.width > 0, 15000), `w=${pdfCv()?.width}`);
+  lw().view.show(3);
+  check('PDF の間の Markdown ページ（ウィジェット付き）', !!win.document.querySelector('.lw-display canvas'));
+
+  // ---- 3. 教材の更新（書き込みのあるページが変わる → 旧版を残す） ----
+  const recA = await store.getRecord(CTRL);
+  // 「旧版ではこのページの内容が違った」ことにする
+  recA.versions[recA.current].sigs.pages['step-interactive'] = 'old';
+  await store.putRecord(recA);
+  const v2 = { ...entry, version: 'abcdef123456' };
+  const r2 = await downloadLecture(store, v2);
+  check('更新：変更のあった書き込みページを検出', r2.changed.includes('step-interactive') && r2.keptOld, JSON.stringify(r2.changed));
+  const recB = await store.getRecord(CTRL);
+  check('更新：新しい版に切り替え、旧版も保持', recB.current === v2.version && !!recB.versions[entry.version] && await caches.has(LEC_CACHE(entry.version)));
+  win = await load(`../lecture.html?l=${CTRL}&v=${entry.version}#6`);
+  check('旧版で開ける（書き込みも表示）', lw().lecture.base.includes(entry.version) && lw().view.page.state.strokes.length === 1);
+  win = await load(`../lecture.html?l=${CTRL}#6`);
+  check('新しい版で開く（書き込みは同じ）', lw().lecture.base.includes(v2.version) && lw().view.page.state.strokes.length === 1);
+  // 失敗する更新（オフラインで新しいファイルが取れない）→ 使用中の版はそのまま
+  const v3 = { ...entry, version: 'fedcba654321', files: entry.files.map((f, i) => (i === 0 ? { ...f, hash: '0'.repeat(64), size: f.size + 1 } : f)) };
+  let failed = false;
+  try { await downloadLecture(store, v3); } catch { failed = true; }
+  const recC = await store.getRecord(CTRL);
+  check('更新の失敗：使用中の版はそのまま', failed && recC.current === v2.version);
+  await cleanupCaches(store);
+  check('失敗したダウンロードの残りを削除', !(await caches.has(LEC_CACHE(v3.version))));
+  await removeVersion(store, CTRL, entry.version);
+  check('旧版を削除', !(await store.getRecord(CTRL)).versions[entry.version] && !(await caches.has(LEC_CACHE(entry.version))));
+  check('署名の比較：変わっていなければ旧版を残さない', changedInkedPages({ pages: { a: '1', b: '2' }, pdf: {} }, { pages: { a: '1', b: '2' }, pdf: {} }, ['a', 'b']).length === 0 &&
+    changedInkedPages({ pages: { a: '1' }, pdf: { s: 'x' } }, { pages: { a: '1' }, pdf: { s: 'y' } }, ['s-3', 'blank-1']).join() === 's-3');
+
+  // ---- 4. バックアップと復元 ----
+  const blob = await createBackup(store, { materials: true });
+  const zip = await readZip(blob);
+  check('バックアップ（.zip）に教材と書き込み', zip.has('backup.json') && [...zip.keys()].some((k) => k.startsWith(`materials/${v2.version}/`)));
+  await removeLecture(store, CTRL, { ink: true });
+  check('（教材と書き込みを削除）', !(await store.getRecord(CTRL)) && (await store.inkedPages(CTRL)).length === 0);
+  const info = await inspectBackup(new File([blob], 'backup.zip', { type: 'application/zip' }));
+  await restoreBackup(store, info);
+  const recR = await store.getRecord(CTRL);
+  check('復元：教材（版）が戻る', recR?.current === v2.version && await verifyVersion(v2.version, v2));
+  check('復元：書き込みが戻る', (await store.inkedPages(CTRL)).includes('step-interactive'));
+  win = await load(`../lecture.html?l=${CTRL}#6`);
+  check('復元した教材をオフラインで開く', lw().lecture.base.includes(v2.version) && lw().view.page.state.strokes.length === 1);
+
+  // ---- ファイルが端末から消えた場合（iPadOS による整理など）----
+  await caches.delete(LEC_CACHE(v2.version));
+  win = await load('../index.html');
+  await until(() => win.document.querySelector(`.lib-row[data-id="${CTRL}"]`));
+  check('教材ファイルが消えたら「未ダウンロード」に戻す（書き込みは残る）',
+    !!win.document.querySelector(`.lib-row.st-none[data-id="${CTRL}"]`) && (await store.inkedPages(CTRL)).length > 0);
+
+  // ---- 後片付け ----
+  await sw({ type: 'test-offline', on: false });
+  for (const p of [CTRL, DEMO]) await removeLecture(store, p, { ink: true });
+  await cleanupCaches(store);
+  check('後片付け', !(await caches.keys()).some((n) => n.startsWith('lw-lec-')));
+}
+
+run().catch((e) => check('例外なく完了', false, e.stack || e.message)).finally(async () => {
+  try { await sw({ type: 'test-offline', on: false }); } catch { /* */ }
+  const failed = results.filter((r) => !r.ok).length;
+  const s = document.getElementById('summary');
+  s.textContent = failed ? `FAILED ${failed} / ${results.length}` : `ALL PASSED ${results.length}`;
+  s.className = failed ? 'fail' : 'pass';
+  document.title = failed
+    ? `FAIL ${failed}/${results.length}: ` + results.filter((r) => !r.ok).map((r) => `${r.name} ${r.detail}`.slice(0, 200)).join(' | ')
+    : `PASS ${results.length}`;
+});
+</script>
+</body>
+</html>

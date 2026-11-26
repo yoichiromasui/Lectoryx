@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "Lectoryx",
+  "short_name": "Lectoryx",
+  "description": "Beyond static lectures. 手書き・動的な教材・数値実験を 1 つにした講義アプリ（iPad + Apple Pencil、オフライン対応）",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f1f2f5",
+  "theme_color": "#f8f9fb",
+  "icons": [
+    { "src": "assets/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
