@@ -20,6 +20,7 @@
 import { h } from '../util.js';
 import { Plot, Surface, PALETTE, color } from './plot.js';
 import * as numeric from './numeric.js';
+import { diag } from '../diag.js';
 import { Slider, NumberInput, Toggle, Select, Animation, makeButton } from './controls.js';
 
 export class Widget {
@@ -141,6 +142,12 @@ export class Widget {
     });
   }
   _run() {
+    const t0 = performance.now();
+    this._runInner();
+    const ms = performance.now() - t0;
+    if (ms > 60) diag('widget', `${this.el.dataset.widget || 'ウィジェット'} ${Math.round(ms)}ms`, 3000);
+  }
+  _runInner() {
     for (const s of this._surfaces) s._begin();
     for (const fn of this._renderers) {
       try {

@@ -59,6 +59,7 @@ assets/                    アイコン
 core/                      共通システム（講義に依存しない）
   app.js                   講義画面の起動・結線・キーボード・スワイプ・書き出し/読み込み
   pwa.js                   Service Worker の登録、アプリの更新（ユーザー操作でのみ切り替え）
+  diag.js                  動作の記録（固まった時間・無視したタッチ・遅い処理・エラー。⋯ →「動作の記録」でコピー）
   config.js                定数（論理ページ幅、ツール既定値、保存設定）
   util.js                  DOM 生成 h()、Emitter、rect 等
   settings.js              端末ローカル設定（localStorage）
@@ -324,7 +325,9 @@ const p = w.plot({ width, height, x:[xmin,xmax], y:[ymin,ymax], xlabel, ylabel, 
 
 ### 6.2 手書き
 - 入力：`ink/input.js`。ペンは `touchstart`（`touchType==='stylus'`）を `preventDefault` してスクロール等を抑止し、`pointerdown` をキャプチャ段階で `stopPropagation`。指はネイティブのスクロール・教材操作に任せる。
-- パームリジェクション：ペン接触中とペンを離して 450ms は指を無効化。直近 4 秒以内にペンを使っていれば接触半径の大きいタッチも無効。ツールバーも同様。
+- パームリジェクション：ペン接触中とペンを離して `PALM_GUARD_MS`（450ms）は指を無効化。ペンを使ってから `PALM_RECENT_MS`（1.5 秒）以内は接触半径 `PALM_RADIUS`（45）超のタッチも無効。ツールバーは `TOOLBAR_PALM_GUARD_MS`（250ms）。長くすると「指で操作しても反応しない＝固まった」ように見えるので注意（実機で「固まる」と言われた。2026-11）。無視したタッチは `diag` に記録。
+- ペン先のダブルタップ（`DOUBLE_TAP`：1 回 250ms 以内・ずれ 4px 以内、間隔 350ms 以内・距離 9px 以内）でペン/蛍光ペン⇔消しゴム（`InkController._tapEnd`）。2 回のタップで付いた点・消えた線は `view.revertOps` で取り消し（やり直し履歴も元に戻す）。設定 `penDoubleTap`。Apple Pencil 本体のダブルタップ（UIPencilInteraction）は Web には届かないので使えない。
+- ページ送りのスワイプはグラフの上でも有効（`[data-ink=off]` の操作パネル・`lwWantsPointer` が真の点・動画等は除く）。ドラッグ点のあるグラフは `touch-action:none` にせず、点の上で始まった `touchstart` だけ `preventDefault`（グラフの上でもスクロールできるように）。
 - 描画：確定セグメントはタイル（高さ 512 の論理 px）へ追記、末尾の暫定セグメントだけ `LiveLayer` に描く（遅延ゼロで滑らか）。タイルは表示範囲 ± 0.5 画面だけ確保（長いページでもメモリ一定）。
 - `getCoalescedEvents()` があれば使う。点は 0.35 論理px 未満の間隔を間引き、座標は 0.1、筆圧は 0.01 に丸めて保存。
 - Undo/Redo はページ単位。操作は「削除したストローク（元位置）と追加したストローク（新位置）」の差分で、全消去・部分消去・拡張も同じ仕組み。
@@ -342,7 +345,7 @@ const p = w.plot({ width, height, x:[xmin,xmax], y:[ymin,ymax], xlabel, ylabel, 
 
 ### 6.2d PDF 教材（`content/pdf.js`）
 - `@pdf` のページは `.lw-content-pdf` 内のキャンバスに PDF.js で描画（解像度は手書きと同じ `scale × dpr`）。別キャンバスに描いてから転写するので再描画中も白くならない。
-- 表示中と前後のページだけ描画し（ページ送りを即座に）、それ以外は解放してメモリを抑える（`PageView.updatePdf`）。
+- 表示中のページをすぐ描画し、前後のページは 450ms 後（書いている最中は書き終わってから）に描画（送った直後に重くならないように）。それ以外は解放してメモリを抑える（`PageView.updatePdf`）。
 - PDF 出力時は 2 倍解像度で別途描画して JPEG 化する。
 
 ### 6.2e テキスト（`ink/text.js`）
@@ -385,7 +388,7 @@ LibraryRecord = { id, path, current:版, source, versions:{ 版: { entry, downlo
 
 ### 6.7 改修時の確認
 - `python tools/build.py --check`：教材の検証（エラー 0 件）。
-- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 86**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
+- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 95**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
 - `http://localhost:8000/tests/offline.html` が **PASS 39**（Service Worker の「テスト用オフライン」で、ダウンロード → ネットワークなしでライブラリ・講義・数式フォント・画像・PDF・ウィジェット・書き込み・値と閲覧位置の復元・動画の Range、教材の更新と旧版保持・失敗時の保持・旧版削除、バックアップと復元、ファイル消失時の扱いを検証）。
 - `pip install websocket-client` の上で `python tests/e2e_prod.py` が **ALL PASSED 27/27**（本番ビルドを `/repo/` 以下で配信 → ダウンロード → サーバを止めて動作 → アプリの新版を配信しても押すまで切り替わらない（完全に閉じて起動し直しても）→ 更新後も書き込み・教材が残る。続けて：教材なしのアプリ（--app-only）を配信し、教材は GitHub API の模擬サーバ（別オリジン・トークン必須・CORS）から取得、設定の案内・トークン誤り・ダウンロードして開く・未ダウンロードは開けない・バックアップにトークンなし・停止後も動作）。sw.js・pwa.js・ライブラリ・配信元を触ったら必ず実行。
 - 実際の GitHub API について確認済み（2026-11）：ブラウザから `Authorization` 付きで CORS が通る、`application/vnd.github.raw+json` で本体が返る（`Content-Type` も同じ独自形式）、`git/ref/heads/<branch>` で SHA が取れる。

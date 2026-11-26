@@ -18,6 +18,7 @@ import {
 } from './download.js';
 import { createBackup, inspectBackup, restoreBackup } from './backup.js';
 import { saveFile, pickFile, dateStamp } from '../ui/files.js';
+import { startDiag, diag, diagText } from '../diag.js';
 
 const S = {
   store: null,
@@ -61,6 +62,7 @@ async function main() {
     reg.addEventListener('updatefound', () => track(reg.installing));
     if (reg.waiting) refreshApp();
   });
+  startDiag('ライブラリ');
   S.store = await openStore();
   S.appConfig = await fetch('app-config.json').then((r) => (r.ok ? r.json() : {}), () => ({})).catch(() => ({}));
   S.dl = new Downloader(S.store);
@@ -86,6 +88,14 @@ async function main() {
 }
 
 async function loadState() {
+  const t0 = performance.now();
+  try { await loadStateInner(); } finally {
+    const ms = performance.now() - t0;
+    if (ms > 300) diag('page', `ライブラリの読み込み ${Math.round(ms)}ms`);
+  }
+}
+
+async function loadStateInner() {
   const st = S.store;
   const [cat, recs, recent, ink, seen] = await Promise.all([
     cachedCatalog(st), st.getLibrary(), st.kvGet('recent'), st.inkSummary(), st.kvGet('seen'),
@@ -536,7 +546,13 @@ async function renderSettings() {
         renderSettings();
         toast(S.app.updateAvailable ? '新しい版があります' : 'アプリは最新です');
       }, 'small') : null,
-      h('p', { class: 'muted' }, 'アプリや教材は自動では更新されません（授業中に変わらないように）。更新はこの画面から行います。')),
+      h('p', { class: 'muted' }, 'アプリや教材は自動では更新されません（授業中に変わらないように）。更新はこの画面から行います。'),
+      btn('動作の記録（不具合の報告用）', () => {
+        const text = diagText('画面: ライブラリ');
+        sheet('動作の記録', [{ label: 'コピーする（Claude Code などに貼り付けて報告）', fn: async () => {
+          try { await navigator.clipboard.writeText(text); toast('コピーしました'); } catch { toast('コピーできませんでした'); }
+        } }]);
+      }, 'small')),
     sec('Lectoryx について',
       h('div', { class: 'lib-about' },
         h('img', { src: 'assets/icon.svg', alt: '', width: 56, height: 56 }),

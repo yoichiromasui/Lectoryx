@@ -33,8 +33,15 @@ export const MIN_POINT_DISTANCE = 0.35;
 
 /** ペンを離してからこの時間（ms）は指タッチを無視する（パームリジェクション） */
 export const PALM_GUARD_MS = 450;
-/** この半径（px）より大きいタッチは手のひらとみなす（取得できる環境のみ） */
-export const PALM_RADIUS = 38;
+/** ツールバーは短く（書いてすぐ指でボタンを押したときに反応しないと、固まったように見えるため） */
+export const TOOLBAR_PALM_GUARD_MS = 250;
+/** この半径（px）より大きいタッチは手のひらとみなす（取得できる環境のみ）。
+ *  ペンを最後に使ってから PALM_RECENT_MS の間だけ適用する（長すぎると指のスクロールが効かず固まったように見える） */
+export const PALM_RADIUS = 45;
+export const PALM_RECENT_MS = 1500;
+
+/** ペン先のダブルタップ（ペン⇔消しゴムの切り替え）：1 回のタップの長さ・ずれ、2 回の間隔・距離（論理px） */
+export const DOUBLE_TAP = { tapMs: 250, tapMove: 4, gapMs: 350, dist: 9 };
 
 /** 指スワイプによるページ送りの判定 */
 export const SWIPE = { minDx: 90, maxSlope: 0.45, maxMs: 650 };

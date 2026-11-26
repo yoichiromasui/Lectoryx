@@ -6,6 +6,7 @@
 import { lecturePathFromUrl, loadLecture, fillPdfTitles, checkPath } from './content/lecture.js';
 import { offlineRoot, encodePath, canOpenOnline } from './content/source.js';
 import { registerSW, swReady } from './pwa.js';
+import { startDiag, diag, diagText, clearDiag } from './diag.js';
 import { buildPrintView, removePrintView } from './export/print.js';
 import { openStore, requestPersistence, isQuotaError } from './store.js';
 import { Settings } from './settings.js';
@@ -13,7 +14,7 @@ import { Book } from './book.js';
 import { PageView } from './view.js';
 import { Toolbar } from './ui/toolbar.js';
 import { Overview, Menu, toast } from './ui/panels.js';
-import { SWIPE } from './config.js';
+import { SWIPE, TOOLBAR_PALM_GUARD_MS } from './config.js';
 import { h, escapeHtml, isAppleTouchDevice } from './util.js';
 
 /** KaTeX のフォントを先に読み込む（後から読み込まれて数式の位置がずれるのを防ぐ） */
@@ -45,6 +46,7 @@ async function main() {
   }
 
   registerSW();
+  startDiag(`講義 ${path}`);
   const settings = new Settings();
   let lecture, store, source;
   try {
@@ -81,6 +83,7 @@ async function main() {
       if (view.clearPage()) toast('書き込みを消去しました（↶ で元に戻せます）');
     },
     exportPdf: () => exportPdf({ view, book, lecture }),
+    diag: () => showDiag(view, lecture),
     exportInk: () => exportInk(book, lecture),
     importInk: () => importInk(book, lecture),
     home: async () => {
@@ -94,6 +97,8 @@ async function main() {
   const menu = new Menu({ root, view, settings, actions });
   const toolbar = new Toolbar({ root, view, settings, actions });
   guardPalm(toolbar.el, view);
+  // ペン先のダブルタップで切り替えたとき
+  view.on('tool-toggled', (tool) => toast(tool === 'eraser' ? '消しゴム（ペン先のダブルタップで切り替え）' : tool === 'hl' ? '蛍光ペン' : 'ペン', 1200));
 
   document.getElementById('loading')?.remove();
   // URL の #3 などでページを指定できる（なければ前回のページと位置）
@@ -127,6 +132,7 @@ async function main() {
   book.on('saved', () => {
     if (!persistAsked) { persistAsked = true; requestPersistence(); }
   });
+  book.on('save-error', (e) => diag('error', `保存の失敗: ${e?.message || e}`));
   book.on('save-error', (e) => toast(isQuotaError(e)
     ? '保存容量が不足して書き込みを保存できません。ライブラリで不要な教材を削除してください'
     : `保存に失敗しました: ${e?.message || e}`, 8000));
@@ -189,6 +195,26 @@ async function rememberRecent(store, lecture) {
     const keep = Object.entries(recent).sort((a, b) => b[1].t - a[1].t).slice(0, 30);
     await store.kvSet('recent', Object.fromEntries(keep));
   } catch { /* 無視 */ }
+}
+
+/** 動作の記録（不具合の報告用）を表示する */
+function showDiag(view, lecture) {
+  const ctx = `講義: ${lecture.id} / ${view.index + 1} ページ / ツール ${view.settings.get('tool')}`;
+  const text = () => diagText(ctx);
+  const pre = h('pre', { class: 'lw-diag-text' }, text());
+  const close = () => wrap.remove();
+  const wrap = h('div', { class: 'lw-overlay lw-diag', onclick: (e) => { if (e.target === wrap) close(); } },
+    h('div', { class: 'lw-diag-panel' },
+      h('div', { class: 'lw-diag-head' },
+        h('strong', {}, '動作の記録（不具合の報告用）'),
+        h('button', { type: 'button', class: 'lw-menu-item', onclick: async () => {
+          try { await navigator.clipboard.writeText(text()); toast('コピーしました。そのまま Claude Code などに貼り付けてください'); } catch { toast('コピーできませんでした（文字を長押しして選択してください）'); }
+        } }, 'コピー'),
+        h('button', { type: 'button', class: 'lw-menu-item', onclick: () => { if (confirm('記録を消去しますか？')) { clearDiag(); pre.textContent = text(); } } }, '消去'),
+        h('button', { type: 'button', class: 'lw-menu-item', onclick: close }, '閉じる')),
+      h('p', { class: 'lw-diag-note' }, '固まった・タッチが効かなかった直後に開くと、その時刻の記録が残っています（新しい順）。記録はこの iPad の中だけにあり、外部には送られません。'),
+      pre));
+  document.body.appendChild(wrap);
 }
 
 let exporting = false;
@@ -265,8 +291,9 @@ function installKeyboard({ view, settings, overview, menu }) {
 function guardPalm(el, view) {
   let blockedAt = -1e9;
   el.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'touch' && view.input.penGuard()) {
+    if (e.pointerType === 'touch' && view.input.penGuard(performance.now(), TOOLBAR_PALM_GUARD_MS)) {
       blockedAt = performance.now();
+      diag('palm', 'ツールバーのタッチを無視（ペンで書いている最中・直後）', 1000);
       e.stopPropagation();
       e.preventDefault();
     }
@@ -279,14 +306,19 @@ function guardPalm(el, view) {
   }, true);
 }
 
-/** 指 1 本の素早い横スワイプでページ送り（ペン使用直後・ウィジェット上では無効） */
+/**
+ * 指 1 本の素早い横スワイプでページ送り。
+ * グラフ（ウィジェットの表示部）の上でもページを送れる。スライダーなどの操作パネル、グラフ上の
+ * ドラッグできる点、動画・埋め込み・リンク・ボタンの上では無効（それぞれの操作を優先）。ペン使用直後も無効。
+ */
 function installSwipe({ stage, view, settings }) {
   let st = null;
   stage.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'touch') return;
     if (st) { st.multi = true; return; }
     if (!settings.get('swipe') || !e.isPrimary || view.input.penGuard()) return;
-    if (e.target.closest?.('.lw-widget, [data-ink="off"], iframe, video, a, button')) return;
+    if (e.target.closest?.('[data-ink="off"], iframe, video, audio, a, button, input, select, textarea, .lw-text-editor')) return;
+    if (typeof e.target.lwWantsPointer === 'function' && e.target.lwWantsPointer(e)) return;
     st = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), multi: false };
   });
   stage.addEventListener('pointerup', (e) => {

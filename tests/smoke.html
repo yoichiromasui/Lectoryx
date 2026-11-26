@@ -278,6 +278,42 @@ async function run() {
   lw().settings.set('textColor', '#1b1b1f');
   lw().settings.set('tool', 'pen');
 
+  // ---- 9e. ペン先のダブルタップ（ペン⇔消しゴム） ----
+  {
+    const st = () => lw().view.page.state.strokes.length;
+    const hist = () => `${lw().view.page.history.undoStack.length}/${lw().view.page.history.redoStack.length}`;
+    const tool = () => lw().settings.get('tool');
+    const n0 = st(), h0 = hist();
+    stroke(win, [[700, 250]]);
+    stroke(win, [[702, 251]]);
+    check('ペン先のダブルタップで消しゴムに（点は残らない・履歴も変わらない）', tool() === 'eraser' && st() === n0 && hist() === h0, `${tool()} ${st()} ${hist()}`);
+    stroke(win, [[700, 250]]);
+    stroke(win, [[700, 250]]);
+    check('もう一度ダブルタップでペンに戻る', tool() === 'pen' && st() === n0 && hist() === h0);
+    // 消しゴムのダブルタップで消えた線も元に戻る
+    stroke(win, line(650, 300, 750, 300));
+    const n1 = st(), h1 = hist();
+    stroke(win, [[700, 340]]);
+    stroke(win, [[700, 340]]);
+    stroke(win, [[700, 300]]);   // 消しゴムで線の上をタップ（いったん消える）
+    stroke(win, [[700, 300]]);
+    check('消しゴムのダブルタップで消えた線は元に戻る', tool() === 'pen' && st() === n1 && hist() === h1 && inkPixel(win, 'pen', 700, 300) > 0, `${st()} ${hist()}`);
+    lw().view.undo();
+    // 離れた所を 2 回タップ → 普通の点
+    stroke(win, [[700, 250]]);
+    stroke(win, [[760, 250]]);
+    check('離れた 2 回のタップは点として残る', tool() === 'pen' && st() === n0 + 2);
+    lw().view.undo();
+    lw().view.undo();
+    lw().settings.set('penDoubleTap', false);
+    stroke(win, [[700, 250]]);
+    stroke(win, [[700, 250]]);
+    check('設定で無効にするとダブルタップしても切り替わらない', tool() === 'pen' && st() === n0 + 2);
+    lw().view.undo();
+    lw().view.undo();
+    lw().settings.set('penDoubleTap', true);
+  }
+
   // ---- 10. 全消去と Undo ----
   lw().view.clearPage();
   check('ページ全消去（テキストも）', lw().view.page.state.strokes.length === 0 && lw().view.page.state.texts.length === 0);
@@ -316,6 +352,35 @@ async function run() {
   cv.dispatchEvent(new win.PointerEvent('pointermove', opt(hx + 40 * sc, hy, 1)));
   cv.dispatchEvent(new win.PointerEvent('pointerup', opt(hx + 40 * sc, hy, 0)));
   check('グラフ上の点をドラッグ', hd.x > 0.55 && pageB.state.strokes.length === 1, `x=${hd.x.toFixed(3)}`);
+  // グラフの上でも、点以外の所ではスクロール・ページ送りができる
+  check('ドラッグ点のあるグラフもスクロールを止めない（touch-action）', getComputedStyle(cv).touchAction !== 'none', getComputedStyle(cv).touchAction);
+  await sleep(500);   // ペンを使った直後は指を無視するので待つ
+  if (typeof win.Touch === 'function' && typeof win.TouchEvent === 'function') {
+    const touchOn = (x, y) => {
+      const t = new win.Touch({ identifier: nextId++, target: cv, clientX: x, clientY: y, radiusX: 10, radiusY: 10 });
+      const ev = new win.TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: [t], targetTouches: [t], changedTouches: [t] });
+      cv.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    const hx2 = cr.left + probe.p.X(hd.x) * sc, hy2 = cr.top + probe.p.Y(hd.y) * sc;
+    check('点の上のタッチだけスクロールを止める', touchOn(hx2, hy2) === true && touchOn(cr.left + 30, cr.top + 30) === false);
+  } else {
+    check('点の上のタッチだけスクロールを止める（Touch 非対応のため省略）', true);
+  }
+  const swipeOnGraph = (x0, y0, dx) => {
+    const id3 = nextId++;
+    const o = (x, b) => ({ bubbles: true, cancelable: true, pointerId: id3, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y0, pressure: b ? 0.5 : 0, buttons: b });
+    cv.dispatchEvent(new win.PointerEvent('pointerdown', o(x0, 1)));
+    cv.dispatchEvent(new win.PointerEvent('pointermove', o(x0 + dx / 2, 1)));
+    cv.dispatchEvent(new win.PointerEvent('pointerup', o(x0 + dx, 0)));
+  };
+  swipeOnGraph(cr.left + cr.width * 0.15, cr.top + cr.height * 0.85, -200);
+  check('グラフの上の横スワイプでページ送り', lw().view.index === 2, `index=${lw().view.index}`);
+  lw().view.show(1);
+  const hx3 = cr.left + probe.p.X(hd.x) * sc, hy3 = cr.top + probe.p.Y(hd.y) * sc;
+  const hx3x = hd.x;
+  swipeOnGraph(hx3, hy3, -120);
+  check('点の上の横ドラッグはページを送らず点を動かす', lw().view.index === 1 && hd.x < hx3x, `index=${lw().view.index} x=${hd.x.toFixed(3)}`);
 
   lw().view.show(0);
   check('ページ A に戻ると書き込みが残る', lw().view.page.state.strokes.length === 2 && inkPixel(win, 'pen', 450, 400) > 0);

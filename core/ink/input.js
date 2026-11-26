@@ -18,10 +18,10 @@
 // [data-ink="off"] の要素（ウィジェットの操作パネル等）の上ではペンも通常操作になる。
 // 要素に lwWantsPointer(e) 関数があり true を返す場合も通常操作（グラフ上の点のドラッグ）。
 // =============================================================
-import { PALM_GUARD_MS, PALM_RADIUS, PAGE_WIDTH } from '../config.js';
+import { PALM_GUARD_MS, PALM_RADIUS, PALM_RECENT_MS, PAGE_WIDTH } from '../config.js';
+import { diag } from '../diag.js';
 
 const INK_TOOLS = new Set(['pen', 'hl', 'eraser', 'laser', 'text']);
-const RECENT_PEN_MS = 4000;
 
 function noInk(target, x, y, pointerType) {
   if (!target || !target.closest) return false;
@@ -67,9 +67,9 @@ export class InkInput {
 
   get inkTool() { return INK_TOOLS.has(this.settings.get('tool')); }
 
-  /** ペンで書いている最中、または書いた直後か */
-  penGuard(now = performance.now()) {
-    return (this.active && this.active.type === 'pen') || now - this.lastPenUp < PALM_GUARD_MS;
+  /** ペンで書いている最中、または書いた直後（ms 以内）か */
+  penGuard(now = performance.now(), ms = PALM_GUARD_MS) {
+    return (this.active && this.active.type === 'pen') || now - this.lastPenUp < ms;
   }
 
   wantsInk(e) {
@@ -165,10 +165,12 @@ export class InkInput {
         continue;
       }
       const radius = Math.max(t.radiusX || 0, t.radiusY || 0);
-      const palm = radius > PALM_RADIUS && now - Math.max(this.lastPenUp, this.lastPenDown) < RECENT_PEN_MS;
-      if (palm || this.penGuard(now)) {
+      const palm = radius > PALM_RADIUS && now - Math.max(this.lastPenUp, this.lastPenDown) < PALM_RECENT_MS;
+      const guard = this.penGuard(now);
+      if (palm || guard) {
         this.blockedTouches.add(t.identifier);
         prevent = true;
+        diag('palm', `指のタッチを無視（${guard ? 'ペンの直後' : '接触が大きい'}・半径 ${Math.round(radius)}）`, 2000);
       }
     }
     if (prevent && e.cancelable) e.preventDefault();

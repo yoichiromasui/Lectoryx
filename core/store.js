@@ -7,7 +7,7 @@
 //   "kv"       key = 文字列                         → 設定・最後に取得した教材一覧・最近使った教材
 //
 //   PageRecord  = { strokes, texts, widgets, extra, bg, updated }
-//   LectureMeta = { added: [{id, after, bg}], lastPage, lastScroll, updated }
+//   LectureMeta = { added: [{id, after, bg}], lastPage, lastScroll, inked（書き込みのあるページ数）, updated }
 //   LibraryRecord は core/library/download.js を参照。
 //
 // 教材本体（ファイル）は Cache Storage（core/library/download.js, sw.js）。書き込みとは別に管理し、
@@ -126,14 +126,20 @@ class IdbStore {
 
   /** 書き込みのある講義の ID → ページ数 */
   async inkSummary() {
-    const keys = await req(this.db.transaction('pages').objectStore('pages').getAllKeys());
-    const values = await req(this.db.transaction('pages').objectStore('pages').getAll());
+    // 通常は講義ごとのメタに記録したページ数だけを読む（全ページの書き込みを読むと重いため）
+    const ls = this.db.transaction('lectures').objectStore('lectures');
+    const [ids, metas] = await Promise.all([req(ls.getAllKeys()), req(ls.getAll())]);
     const out = {};
-    keys.forEach((k, i) => {
-      if (!hasInk(values[i])) return;
-      const id = k.slice(0, k.indexOf(SEP));
-      out[id] = (out[id] || 0) + 1;
+    const legacy = [];
+    ids.forEach((id, i) => {
+      const n = metas[i]?.inked;
+      if (typeof n === 'number') { if (n) out[id] = n; } else legacy.push(id);
     });
+    // 記録がない古いデータだけ数える
+    for (const id of legacy) {
+      const n = (await this.inkedPages(id)).length;
+      if (n) out[id] = n;
+    }
     return out;
   }
 

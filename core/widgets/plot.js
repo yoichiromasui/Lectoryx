@@ -472,7 +472,8 @@ export class Plot extends Surface {
     const hd = new Handle(this, o);
     this._handles.push(hd);
     this.w._params.push(hd);     // 位置を保存・復元する
-    this.canvas.style.touchAction = 'none';
+    // グラフ全体を touch-action:none にするとスクロール・ページ送りができなくなるので、
+    // 点の上で始まったタッチだけスクロールを止める（_initPointer の touchstart）
     this.el.classList.add('lw-has-handles');
     return hd;
   }
@@ -528,8 +529,18 @@ export class Plot extends Surface {
   // ---- 点のドラッグ ----
   _initPointer() {
     const cv = this.canvas;
-    // InkInput から参照：この位置ならペンでも手書きせずドラッグを優先
+    // InkInput・ページ送りから参照：この位置ならペンでも手書きせずドラッグを優先
     cv.lwWantsPointer = (e) => !!this._hit(e);
+    // 点の上で始まったタッチだけスクロールを止める（それ以外はグラフの上でもスクロール・ページ送りできる）
+    cv.addEventListener('touchstart', (e) => {
+      if (!e.cancelable) return;
+      for (const t of e.changedTouches) {
+        if (this._hit({ clientX: t.clientX, clientY: t.clientY, pointerType: t.touchType === 'stylus' ? 'pen' : 'touch' })) {
+          e.preventDefault();
+          return;
+        }
+      }
+    }, { passive: false });
     cv.addEventListener('pointerdown', (e) => {
       const hd = this._hit(e);
       if (!hd) return;

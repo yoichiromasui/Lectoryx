@@ -16,7 +16,7 @@
 //   view.showEraser(x,y,r) / view.hideEraser()
 // =============================================================
 import { uid, rect, rafThrottle } from '../util.js';
-import { NEUTRAL_PRESSURE, PRESSURE_SMOOTHING, MIN_POINT_DISTANCE, PAGE_WIDTH } from '../config.js';
+import { NEUTRAL_PRESSURE, PRESSURE_SMOOTHING, MIN_POINT_DISTANCE, PAGE_WIDTH, DOUBLE_TAP } from '../config.js';
 import { pointCount, round1, round2, strokeBounds } from './stroke.js';
 import { strokeHit, splitStroke } from './eraser.js';
 import { diffStrokes } from './history.js';
@@ -33,6 +33,12 @@ export class InkController {
     this.usePressure = false;
     this.erase = null;
     this.flushErase = rafThrottle(() => this._flushErase());
+    // ペン先のダブルタップ（ペン⇔消しゴム）
+    this.tap = null;          // 今のタップ { t0, x, y, moved }
+    this.lastTap = null;      // 直前のタップ { up, x, y, op, page }
+    const t = settings.get('tool');
+    this.lastDrawTool = t === 'hl' ? 'hl' : 'pen';
+    settings.on('change', (k, v) => { if (k === 'tool' && (v === 'pen' || v === 'hl')) this.lastDrawTool = v; });
   }
 
   get active() { return this.mode !== null; }
@@ -43,6 +49,9 @@ export class InkController {
     if (!page || this.mode) return false;
     const tool = this.settings.get('tool');
     this.page = page;
+    // やり直しの履歴はタップの点を足すと消えるので、元に戻せるよう控えておく
+    this.tap = pt.type === 'pen' && (tool === 'pen' || tool === 'hl' || tool === 'eraser')
+      ? { t0: performance.now(), x: pt.x, y: pt.y, moved: 0, redo: page.history.redoStack.slice() } : null;
 
     if (tool === 'pen' || tool === 'hl') {
       const s = { id: uid(), t: tool, c: this.settings.get(tool + 'Color'), w: this.settings.get(tool + 'Width'), p: [] };
@@ -84,6 +93,9 @@ export class InkController {
   }
 
   move(pts) {
+    if (this.tap) {
+      for (const pt of pts) this.tap.moved = Math.max(this.tap.moved, Math.hypot(pt.x - this.tap.x, pt.y - this.tap.y));
+    }
     if (this.mode === 'draw') {
       let added = false;
       for (const pt of pts) added = this._push(pt, false) || added;
@@ -101,13 +113,15 @@ export class InkController {
 
   end() {
     const page = this.page;
+    let op = null;
     if (this.mode === 'draw') {
       const s = this.stroke;
       this.view.layer(s.t).drawSegments(s, this.drawn, pointCount(s));
       this.view.live.clear();
       const i = page.state.strokes.indexOf(s);
       if (i >= 0) {
-        page.history.push({ removed: [], added: [{ i, s }] });
+        op = { removed: [], added: [{ i, s }] };
+        page.history.push(op);
         this.view.inkChanged(page);
       }
     } else if (this.mode === 'laser') {
@@ -117,17 +131,48 @@ export class InkController {
     } else if (this.mode === 'erase') {
       this.flushErase.cancel();
       this._flushErase();
-      const op = diffStrokes(this.erase.before, page.state.strokes);
-      if (op.removed.length || op.added.length) {
+      const d = diffStrokes(this.erase.before, page.state.strokes);
+      if (d.removed.length || d.added.length) {
+        op = d;
         page.history.push(op);
         this.view.inkChanged(page);
       }
       this.erase = null;
       this.view.hideEraser();
     }
+    const wasTap = this.mode === 'draw' || this.mode === 'erase';
     this.mode = null;
     this.stroke = null;
     this.page = null;
+    if (wasTap) this._tapEnd(op, page);
+  }
+
+  /**
+   * ペン先のダブルタップ：同じ所を素早く 2 回タップするとペン⇔消しゴムを切り替える。
+   * 2 回のタップで付けた点・消した線は元に戻す（跡を残さない。やり直しの履歴にも残さない）。
+   */
+  _tapEnd(op, page) {
+    const tap = this.tap;
+    this.tap = null;
+    if (!tap) return;
+    const now = performance.now();
+    const T = DOUBLE_TAP;
+    if (now - tap.t0 > T.tapMs || tap.moved > T.tapMove || !this.settings.get('penDoubleTap')) {
+      this.lastTap = null;
+      return;
+    }
+    const prev = this.lastTap;
+    if (prev && prev.page === page && tap.t0 - prev.up <= T.gapMs && Math.hypot(tap.x - prev.x, tap.y - prev.y) <= T.dist) {
+      this.lastTap = null;
+      this.view.revertOps(page, [op, prev.op]);
+      page.history.redoStack = prev.redo;
+      this.view.emit('ink', page);       // ツールバーの「やり直す」の状態を更新
+      const next = this.settings.get('tool') === 'eraser' ? this.lastDrawTool : 'eraser';
+      this.settings.set('tool', next);
+      this.view.emit('tool-toggled', next);
+      return;
+    }
+    this.lastTap = { up: now, x: tap.x, y: tap.y, op, page, redo: tap.redo };
   }
 
   /** ペンのホバー（対応機種のみ）：消しゴムの位置を予告表示 */

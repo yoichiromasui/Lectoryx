@@ -9,7 +9,8 @@
 // 両者の相対位置は変わらない。
 // =============================================================
 import { PAGE_WIDTH, MIN_VISIBLE_RATIO, MAX_INK_RESOLUTION, TILE_MARGIN_SCREENS, EXTEND_RATIO } from './config.js';
-import { h, Emitter, rafThrottle, clamp } from './util.js';
+import { h, Emitter, rafThrottle, clamp, rect } from './util.js';
+import { diag, timed } from './diag.js';
 import { InkLayer, LiveLayer } from './ink/layer.js';
 import { LaserLayer } from './ink/laser.js';
 import { TextLayer } from './ink/text.js';
@@ -80,8 +81,15 @@ export class PageView extends Emitter {
   }
 
   // ---- ページ表示 ----
-  show(index, { scrollTop } = {}) {
+  show(index, opts = {}) {
     if (!this.book.length) return;
+    const t0 = performance.now();
+    this._show(index, opts);
+    const ms = performance.now() - t0;
+    diag('page', `${this.index + 1} ページを表示 ${Math.round(ms)}ms`);
+  }
+
+  _show(index, { scrollTop } = {}) {
     index = clamp(index, 0, this.book.length - 1);
     this.input.finish();
     this.texts.commit();
@@ -174,21 +182,36 @@ export class PageView extends Emitter {
   }
 
   /**
-   * PDF ページの描画管理：表示中と前後のページを現在の解像度で描画し、
-   * 離れたページのビットマップは解放する（ページ送りを即座にしつつメモリを抑える）。
+   * PDF ページの描画管理：表示中のページをすぐ描画し、前後のページは少し後（書いている最中は
+   * 書き終わってから）に描画しておく（ページ送りを即座にしつつ、送った直後に重くならないように）。
+   * 離れたページのビットマップは解放してメモリを抑える。
    */
   updatePdf() {
     const r = this.inkResolution;
     const keep = new Set();
+    const render = (p, c) => {
+      const t0 = performance.now();
+      renderPdfPage(p.source.pdf, c.pdfCanvas, r).then((done) => {
+        const ms = performance.now() - t0;
+        if (done && ms > 400) diag('pdf', `p.${p.source.pdf.n} ${Math.round(ms)}ms`);
+      }, (e) => { console.error('PDF の描画に失敗', e); diag('error', `PDF の描画: ${e?.message || e}`); });
+    };
     for (const d of [0, 1, -1, 2]) {
       const p = this.book.pages[this.index + d];
       if (!p || !p.source?.pdf) continue;
       const c = this.content(p);
       keep.add(c);
-      if (Math.abs(d) <= 1) {
-        renderPdfPage(p.source.pdf, c.pdfCanvas, r).catch((e) => console.error('PDF の描画に失敗', e));
-      }
+      if (d === 0) render(p, c);
     }
+    clearTimeout(this._pdfTimer);
+    const neighbors = () => {
+      if (this.ink.active) { this._pdfTimer = setTimeout(neighbors, 300); return; }
+      for (const d of [1, -1]) {
+        const p = this.book.pages[this.index + d];
+        if (p?.source?.pdf) render(p, this.content(p));
+      }
+    };
+    this._pdfTimer = setTimeout(neighbors, 450);
     for (const c of this.contents.values()) {
       if (c.pdfCanvas && !keep.has(c) && c.pdfCanvas.width > 0) releasePdfCanvas(c.pdfCanvas);
     }
@@ -316,14 +339,18 @@ export class PageView extends Emitter {
 
   updateTiles() {
     const { top, bottom } = this.visibleRange(TILE_MARGIN_SCREENS);
-    this.hl.updateVisible(top, bottom);
-    this.pen.updateVisible(top, bottom);
+    timed('ink', '書き込みの再描画', 80, () => {
+      this.hl.updateVisible(top, bottom);
+      this.pen.updateVisible(top, bottom);
+    });
   }
 
   // ---- 手書き関連の操作 ----
   redrawInk(region) {
-    this.hl.redraw(region);
-    this.pen.redraw(region);
+    timed('ink', '書き込みの再描画', 80, () => {
+      this.hl.redraw(region);
+      this.pen.redraw(region);
+    });
   }
 
   inkChanged(page) {
@@ -343,6 +370,22 @@ export class PageView extends Emitter {
     if (op.texts) this.texts.render();
     if (op.extra || op.texts) this.layout();
     const b = opBounds(op);
+    if (b) this.redrawInk(b);
+    this.inkChanged(page);
+  }
+
+  /** 直近の操作を取り消す（やり直しの履歴にも残さない。ペン先のダブルタップで付けた点などに使う） */
+  revertOps(page, ops) {
+    let b = null;
+    for (const op of ops) {
+      if (!op) continue;
+      const st = page.history.undoStack;
+      if (st[st.length - 1] !== op) continue;
+      page.history.undo(page.state);
+      page.history.redoStack.pop();
+      b = rect.union(b, opBounds(op));
+    }
+    if (page !== this.page) return;
     if (b) this.redrawInk(b);
     this.inkChanged(page);
   }

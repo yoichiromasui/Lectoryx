@@ -132,6 +132,12 @@ export class Book extends Emitter {
     }
     const deleted = [...this.deleted];
     for (const id of deleted) delete this.saved[id];
+    // 書き込みのあるページ数（ライブラリの表示用。全ページのデータを読まずに済むように）
+    const inked = this.pages.filter((p) => p.state.strokes.length || p.state.texts.length).length;
+    if (this.meta.inked !== inked) {
+      this.meta.inked = inked;
+      this.metaDirty = true;
+    }
     const meta = this.metaDirty ? { ...this.meta, updated: now } : null;
     const retry = { pages: [...this.dirty], deleted, meta: !!meta };
     this.dirty.clear();
@@ -199,7 +205,8 @@ export async function importInkData(store, lectureId, data, { lastPage } = {}) {
   }
   const added = Array.isArray(data.meta?.added) ? data.meta.added.filter((a) => a && typeof a.id === 'string') : [];
   await store.clearLecture(lectureId);
-  await store.save(lectureId, { pages, meta: { added, lastPage: lastPage ?? data.meta?.lastPage ?? null, updated: Date.now() } });
+  const inked = Object.values(pages).filter((r) => r.strokes.length || r.texts.length).length;
+  await store.save(lectureId, { pages, meta: { added, lastPage: lastPage ?? data.meta?.lastPage ?? null, inked, updated: Date.now() } });
 }
 
 function pickRecord(r) {

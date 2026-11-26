@@ -126,6 +126,7 @@ export class Menu {
       }, { disabled: page?.kind !== 'blank', danger: true }),
       h('hr'),
       toggle('筆圧で線の太さを変える', 'pressure'),
+      toggle('ペン先のダブルタップでペン⇔消しゴム', 'penDoubleTap'),
       toggle('指でも書く（ペンがないとき）', 'fingerDraw'),
       toggle('指の横スワイプでページ送り', 'swipe'),
       h('hr'),
@@ -135,6 +136,7 @@ export class Menu {
       item('バックアップから復元…', () => this.actions.importInk()),
       h('hr'),
       fsAvailable ? item('全画面表示', () => toggleFullscreen()) : null,
+      item('動作の記録（不具合の報告用）', () => this.actions.diag()),
       item('ライブラリ（教材一覧）へ戻る', () => this.actions.home()),
     );
     const r = anchor.getBoundingClientRect();

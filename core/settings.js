@@ -17,6 +17,7 @@ const DEFAULTS = {
   textColor: PEN_COLORS[0],
   textSize: TEXT_SIZES[1],
   pressure: true,            // 筆圧で線幅を変える
+  penDoubleTap: true,        // ペン先のダブルタップでペン⇔消しゴム
   fingerDraw: false,         // 指でも書く（Apple Pencil がないとき用）
   swipe: true,               // 指の横スワイプでページ送り
   compact: false,            // ツールバー最小化
