@@ -214,6 +214,7 @@ async function run() {
   const lr = lw().view.laser.geom;
   const laserAlpha = () => {
     const g = lw().view.laser.geom;
+    if (!g.r) return 0;   // 何も表示していないときはキャンバスを解放している
     return laserCanvas.getContext('2d').getImageData(Math.round(300 * g.r), Math.round((620 - g.top) * g.r), 1, 1).data[3];
   };
   check('レーザー（軌跡）は書き込み・Undo 履歴にならない', lw().view.page.state.strokes.length === nL && lw().view.page.history.undoStack.length === uL);
@@ -231,6 +232,7 @@ async function run() {
   await sleep(1600);
   await frames(win, 2);
   check('数秒後に消える', laserAlpha() === 0 && lw().view.laser.strokes.length === 0);
+  check('消えたらレーザーの描画面を解放（電池の節約）', laserCanvas.width === 1 && laserCanvas.style.display === 'none');
   lw().settings.set('laserMode', 'dot');
   stroke(win, line(150, 620, 200, 620, 4));
   await sleep(500);
@@ -312,6 +314,30 @@ async function run() {
     lw().view.undo();
     lw().view.undo();
     lw().settings.set('penDoubleTap', true);
+  }
+
+  // ---- 9f. 授業モード（ツールバーを隠す） ----
+  {
+    const doc = win.document;
+    const tb = doc.querySelector('.lw-toolbar');
+    const handle = doc.querySelector('.lw-tb-handle');
+    const shown = (el) => win.getComputedStyle(el).display !== 'none';
+    doc.querySelector('.lw-tb-btn[title^="ツールバーを隠す"]').click();
+    await frames(win, 2);
+    check('授業モード：ツールバーを隠し、小さなボタンだけ表示', !shown(tb) && shown(handle) && lw().view.stage.getBoundingClientRect().top === 0);
+    handle.click();
+    check('小さなボタンでツールバーを一時表示', shown(tb) && !shown(handle));
+    tb.querySelector('.lw-tb-btn[title^="蛍光ペン"]').click();
+    await sleep(450);
+    check('ツールを選ぶと自動で隠れる', !shown(tb) && shown(handle) && lw().settings.get('tool') === 'hl');
+    handle.click();
+    lw().view.stage.dispatchEvent(new win.PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: nextId++, pointerType: 'pen', isPrimary: true, clientX: 300, clientY: 400, buttons: 1 }));
+    check('ページに書き始めると自動で隠れる', !shown(tb) && shown(handle));
+    handle.click();
+    tb.querySelector('.lw-tb-btn[title^="ツールバーを常に表示"]').click();
+    await frames(win, 2);
+    check('授業モードをやめると元のツールバー', shown(tb) && !shown(handle) && lw().view.stage.getBoundingClientRect().top > 0);
+    lw().settings.set('tool', 'pen');
   }
 
   // ---- 10. 全消去と Undo ----

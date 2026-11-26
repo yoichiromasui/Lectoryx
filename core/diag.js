@@ -70,22 +70,35 @@ export function clearDiag() {
 
 let started = false;
 
-/** 応答の遅れ・エラーの監視を始める（講義画面の起動時に 1 回） */
+/**
+ * 応答の遅れ・エラーの監視を始める（講義画面・ライブラリの起動時に 1 回）
+ * 電池を使わないよう、常時動くタイマーは 1 秒間隔（背面では止める）。
+ * 主な検出は「タッチ・ペンが画面に触れてから処理されるまでの遅れ」で、操作したときにだけ測る。
+ */
 export function startDiag(label = '') {
   if (started) return;
   started = true;
   diag('start', label);
+  // 1) 操作への反応の遅れ（触れた時刻 e.timeStamp と処理した時刻の差）
+  const lag = (e) => {
+    const ms = performance.now() - e.timeStamp;
+    if (ms > 250 && ms < 60000) diag('stall', `タッチ・ペンへの反応が ${Math.round(ms)}ms 遅れた`, 500);
+  };
+  window.addEventListener('pointerdown', lag, { capture: true, passive: true });
+  // 2) 1 秒ごとのタイマーの遅れ（操作していないときに固まった場合）
   let last = performance.now();
-  setInterval(() => {
+  let timer = 0;
+  const tick = () => {
     const now = performance.now();
-    const gap = now - last - 100;
+    const gap = now - last - 1000;
     last = now;
-    if (gap > 250 && document.visibilityState === 'visible') diag('stall', `${Math.round(gap)}ms 応答なし`);
-  }, 100);
+    if (gap > 300) diag('stall', `${Math.round(gap)}ms 応答なし`);
+  };
+  const run = () => { clearInterval(timer); last = performance.now(); timer = setInterval(tick, 1000); };
+  run();
   document.addEventListener('visibilitychange', () => {
-    last = performance.now();
     diag('state', document.visibilityState === 'visible' ? '前面に戻った' : '背面へ');
-    if (document.visibilityState === 'hidden') persist();
+    if (document.visibilityState === 'hidden') { clearInterval(timer); persist(); } else run();
   });
   window.addEventListener('error', (e) => diag('error', `${e.message} (${(e.filename || '').replace(/^.*\//, '')}:${e.lineno})`));
   window.addEventListener('unhandledrejection', (e) => diag('error', e.reason?.message || String(e.reason)));

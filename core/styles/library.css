@@ -26,11 +26,9 @@ button { font: inherit; }
   position: sticky;
   top: 0;
   z-index: 5;
-  background: rgba(248, 249, 251, 0.96);
+  background: #f8f9fb;
   border-bottom: 1px solid var(--line);
   padding-top: env(safe-area-inset-top);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
 }
 .lib-head-in {
   max-width: 980px;

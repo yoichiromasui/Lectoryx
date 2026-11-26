@@ -5,6 +5,11 @@
 // =============================================================
 import { h, clamp } from '../util.js';
 
+// 再生中のアニメーションは、この時間だれも操作しなければ自動で一時停止する（映したまま話していても電池を使い続けないように）
+const IDLE_PAUSE_MS = 3 * 60 * 1000;
+let lastInput = performance.now();
+for (const t of ['pointerdown', 'keydown']) addEventListener(t, () => { lastInput = performance.now(); }, { capture: true, passive: true });
+
 function decimalsOf(step) {
   if (!(step > 0)) return 2;
   const d = Math.ceil(-Math.log10(step) - 1e-9);
@@ -169,7 +174,7 @@ export function makeButton(label, fn, w) {
 /**
  * w.animation({ duration, loop, speed, autoplay, label, unit })
  *   .t（経過時間）/ .playing / play() / pause() / toggle() / reset()
- *   ページを離れると自動で一時停止する。
+ *   ページを離れると自動で一時停止する。3 分間だれも操作しなければ自動で一時停止する（電池の節約）。
  */
 export class Animation {
   constructor(o, w) {
@@ -215,6 +220,7 @@ export class Animation {
   }
   _tick(now) {
     if (!this.playing) return;
+    if (now - lastInput > IDLE_PAUSE_MS) { this.pause(); return; }
     const dt = Math.min(0.1, (now - this._last) / 1000);
     this._last = now;
     this.t += dt * this.speed;

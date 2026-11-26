@@ -75,7 +75,15 @@ export class LaserLayer {
     this.strokes = [];
     this.dot = null;
     this.down = false;
-    this._clearCanvas();
+    this._release();
+  }
+
+  /** 何も表示していないときはキャンバスを最小にして外す（画面全体の透明な層を合成し続けないように） */
+  _release() {
+    const cv = this.canvas;
+    cv.width = cv.height = 1;
+    cv.style.display = 'none';
+    this.geom = { top: NaN, h: 0, r: 0 };
   }
 
   _kick() {
@@ -109,6 +117,7 @@ export class LaserLayer {
       if (this.dot) drawGlowDot(c, this.dot.x, this.dot.y, this.dot.c, dotAlpha);
     }
     if (this.active) this._kick();
+    else this._release();
   }
 
   /** 表示範囲に合わせてキャンバスを配置。変わったら true */
@@ -126,6 +135,7 @@ export class LaserLayer {
     cv.style.top = top + 'px';
     cv.style.width = PAGE_WIDTH + 'px';
     cv.style.height = bh / r + 'px';
+    cv.style.display = '';
     this.geom = { top, h, r };
     return true;
   }

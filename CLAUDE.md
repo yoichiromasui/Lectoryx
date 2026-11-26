@@ -89,7 +89,7 @@ core/                      共通システム（講義に依存しない）
   widgets/plot.js          軽量 2D プロット（Canvas）
   widgets/numeric.js       数値計算の道具（w.math）
   widgets/index.js         教材中のウィジェット要素の初期化
-  ui/toolbar.js            上部ツールバー
+  ui/toolbar.js            上部ツールバー（授業モード：設定 compact で隠し、右上の小さなボタンで一時表示）
   ui/panels.js             ページ一覧・メニュー・トースト
   ui/icons.js              アイコン
   ui/files.js              ファイルの保存（iPad は共有シート）・選択
@@ -265,7 +265,7 @@ export function stepResponse(w, opts) {
 | `w.checkbox(o)` | `label, value` | `.value`（真偽） |
 | `w.select(o)` | `label, options:[値…] or [{label,value}…] or {表示:値}, value` | セグメントボタン |
 | `w.button(label, fn)` | | クリックで `fn()` → 再描画 |
-| `w.animation(o)` | `duration`(s), `loop`, `speed`, `autoplay`, `label`, `unit`, `showTime` | `.t`（経過秒）, `.playing`, `play()`, `pause()`, `reset()`, `onFrame(fn)`。▶/⏸/⟲ ボタン付き。ページを離れると停止 |
+| `w.animation(o)` | `duration`(s), `loop`, `speed`, `autoplay`, `label`, `unit`, `showTime` | `.t`（経過秒）, `.playing`, `play()`, `pause()`, `reset()`, `onFrame(fn)`。▶/⏸/⟲ ボタン付き。ページを離れると停止。3 分間だれも操作しなければ自動で一時停止（電池の節約） |
 | `w.br()` | | 操作部の改行 |
 
 ### 5.2 表示部品
@@ -388,13 +388,14 @@ LibraryRecord = { id, path, current:版, source, versions:{ 版: { entry, downlo
 
 ### 6.7 改修時の確認
 - `python tools/build.py --check`：教材の検証（エラー 0 件）。
-- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 95**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
+- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 101**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
 - `http://localhost:8000/tests/offline.html` が **PASS 39**（Service Worker の「テスト用オフライン」で、ダウンロード → ネットワークなしでライブラリ・講義・数式フォント・画像・PDF・ウィジェット・書き込み・値と閲覧位置の復元・動画の Range、教材の更新と旧版保持・失敗時の保持・旧版削除、バックアップと復元、ファイル消失時の扱いを検証）。
 - `pip install websocket-client` の上で `python tests/e2e_prod.py` が **ALL PASSED 27/27**（本番ビルドを `/repo/` 以下で配信 → ダウンロード → サーバを止めて動作 → アプリの新版を配信しても押すまで切り替わらない（完全に閉じて起動し直しても）→ 更新後も書き込み・教材が残る。続けて：教材なしのアプリ（--app-only）を配信し、教材は GitHub API の模擬サーバ（別オリジン・トークン必須・CORS）から取得、設定の案内・トークン誤り・ダウンロードして開く・未ダウンロードは開けない・バックアップにトークンなし・停止後も動作）。sw.js・pwa.js・ライブラリ・配信元を触ったら必ず実行。
 - 実際の GitHub API について確認済み（2026-11）：ブラウザから `Authorization` 付きで CORS が通る、`application/vnd.github.raw+json` で本体が返る（`Content-Type` も同じ独自形式）、`git/ref/heads/<branch>` で SHA が取れる。
 - 見た目は `tests/screens.html?l=...&p=6&w=820&h=1180&state=ink,menu` で確認（state: compact, menu, overview, eraser, hl, hand, laser, text, ink）。
 - PDF 出力の確認：`lecture.html?l=...&print=view` をヘッドレス Chrome で print-to-pdf（`preferCSSPageSize`）。出来た PDF を一時的な講義に `@pdf` で読み込ませると画面で確認できる。
 - iPad 実機でしか確認できないこと（Pencil の筆圧・追従、パーム、スクロールとの干渉、ホーム画面アプリ）は README の「実機チェックリスト」に従って確認を依頼する。
+- **電池の消費**（古い iPad で授業 1 コマもつこと）：常に動き続けるタイマー・`requestAnimationFrame` のループを作らない（表示中・操作中・再生中だけ動かし、終わったら止める。監視などのタイマーは 1 秒以上の間隔で、背面では止める）。`mix-blend-mode` などの合成は必要なときだけ（蛍光ペンの層は線があるページだけ表示）。キャンバスは表示範囲だけ確保する。
 - Safari の対応状況に注意：正規表現の後読み、`Array.prototype.findLast` 等の新しすぎる API は避ける。トップレベル await は使わない。
 
 ---

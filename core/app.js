@@ -97,6 +97,7 @@ async function main() {
   const menu = new Menu({ root, view, settings, actions });
   const toolbar = new Toolbar({ root, view, settings, actions });
   guardPalm(toolbar.el, view);
+  guardPalm(toolbar.handle, view);
   // ペン先のダブルタップで切り替えたとき
   view.on('tool-toggled', (tool) => toast(tool === 'eraser' ? '消しゴム（ペン先のダブルタップで切り替え）' : tool === 'hl' ? '蛍光ペン' : 'ペン', 1200));
 

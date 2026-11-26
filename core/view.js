@@ -119,6 +119,7 @@ export class PageView extends Emitter {
     }
     this.hl.setStrokes(page.state.strokes);
     this.pen.setStrokes(page.state.strokes);
+    this.syncHlLayer();
     this.texts.render();
     this.layout();
     this.updatePdf();
@@ -355,7 +356,17 @@ export class PageView extends Emitter {
 
   inkChanged(page) {
     this.book.markDirty(page);
+    if (page === this.page) this.syncHlLayer();
     this.emit('ink', page);
+  }
+
+  /**
+   * 蛍光ペンの層は、このページに蛍光ペンの線があるとき（または描いている間）だけ表示・合成する。
+   * 乗算の合成（mix-blend-mode）は画面を描き直すたびに GPU を使い、電池を消費するため。
+   */
+  syncHlLayer(force = false) {
+    const on = force || !!this.page?.state.strokes.some((s) => s.t === 'hl');
+    this.hl.el.classList.toggle('lw-active', on);
   }
 
   undo() { this._history('undo'); }

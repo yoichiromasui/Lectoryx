@@ -1,10 +1,15 @@
 // =============================================================
 // 上部の小型ツールバー
 //   [ページ一覧][<][3/12][>][+白紙]  [操作][ペン][蛍光][消しゴム][レーザー][テキスト]  [色・太さ]  …  [↶][↷][拡張][消去][⋯][▲]
-// 最小化（compact）すると右上の小さなパレットになる。
+// 授業モード（設定 compact）：ツールバーを隠し、右上の小さなボタンだけにする（プロジェクタに道具を映さない）。
+//   ボタンを押すとツールバーが一時的に出て、ツールを選ぶ・ページに書き始める・5 秒操作しないと自動で隠れる。
 // =============================================================
 import { h } from '../util.js';
 import { ICONS } from './icons.js';
+import { toast } from './panels.js';
+
+const PEEK_MS = 5000;
+const TOOL_KEYS = ['tool', 'penColor', 'penWidth', 'hlColor', 'hlWidth', 'eraserMode', 'eraserSize', 'laserMode', 'laserColor', 'textColor', 'textSize'];
 import { PEN_COLORS, PEN_WIDTHS, HL_COLORS, HL_WIDTHS, ERASER_SIZES, LASER_COLORS, TEXT_SIZES } from '../config.js';
 
 const TOOL_NAMES = { hand: '操作（ペンで教材を操作）', pen: 'ペン', hl: '蛍光ペン', eraser: '消しゴム', laser: 'レーザーポインタ（書き込まれない）', text: 'テキスト（タップした所に入力。$...$ で数式）' };
@@ -40,7 +45,10 @@ export class Toolbar {
     this.undoBtn = btn('undo', '元に戻す（⌘Z）', () => view.undo(), 'keep');
     this.redoBtn = btn('redo', 'やり直す（⇧⌘Z）', () => view.redo());
     this.moreBtn = btn('more', 'メニュー', () => actions.menu(this.moreBtn));
-    this.compactBtn = btn('collapse', 'ツールバーを最小化', () => settings.toggle('compact'), 'keep');
+    this.compactBtn = btn('collapse', 'ツールバーを隠す（授業モード）', () => {
+      settings.toggle('compact');
+      if (settings.get('compact')) toast('ツールバーを隠しました。右上の小さなボタンで一時的に表示できます', 3500);
+    }, 'keep');
     const acts = h('div', { class: 'lw-tb-group' },
       this.undoBtn, this.redoBtn,
       btn('extend', '板書スペースを下に拡張', () => view.extend(), 'wide-only'),
@@ -49,11 +57,21 @@ export class Toolbar {
 
     this.el = h('header', { class: 'lw-toolbar' }, nav, tools, this.opts, h('div', { class: 'lw-tb-spacer' }), acts);
     root.appendChild(this.el);
+    // 授業モードの小さなボタン（押すとツールバーを一時的に表示）
+    this.handle = h('button', { type: 'button', class: 'lw-tb-handle', title: 'ツールバーを表示', 'aria-label': 'ツールバーを表示', html: ICONS.expand, onclick: () => this.peek() });
+    root.appendChild(this.handle);
+    this.peeking = false;
+    this.peekTimer = 0;
+    this.el.addEventListener('pointerdown', () => { if (this.peeking) this._schedulePeekHide(); }, true);
+    view.stage.addEventListener('pointerdown', () => this.unpeek(), true);
     // ボタンを押しても入力中のテキストからフォーカスを外さない（色・サイズを入力中の文字に適用するため）
     this.el.addEventListener('mousedown', (e) => { if (e.target.closest('button')) e.preventDefault(); });
 
     settings.on('change', (k) => {
-      if (['tool', 'penColor', 'penWidth', 'hlColor', 'hlWidth', 'eraserMode', 'eraserSize', 'laserMode', 'laserColor', 'textColor', 'textSize'].includes(k)) this.syncTools();
+      if (TOOL_KEYS.includes(k)) {
+        this.syncTools();
+        if (this.peeking) setTimeout(() => this.unpeek(), 300);   // 選んだら隠す
+      }
       if (k === 'compact') this.syncCompact();
     });
     view.on('page', () => this.syncPage());
@@ -76,10 +94,38 @@ export class Toolbar {
 
   syncCompact() {
     const c = this.settings.get('compact');
+    if (!c) this.unpeek(true);
     this.el.classList.toggle('compact', c);
     document.body.classList.toggle('lw-compact', c);
     this.compactBtn.innerHTML = c ? ICONS.expand : ICONS.collapse;
-    this.compactBtn.title = c ? 'ツールバーを元に戻す' : 'ツールバーを最小化';
+    this.compactBtn.title = c ? 'ツールバーを常に表示する' : 'ツールバーを隠す（授業モード）';
+  }
+
+  /** 授業モードでツールバーを一時的に表示 */
+  peek() {
+    if (!this.settings.get('compact')) return;
+    this.peeking = true;
+    this.el.classList.add('peek');
+    document.body.classList.add('lw-tb-peek');
+    this._schedulePeekHide();
+  }
+
+  /** 一時表示をやめる（メニュー・ページ一覧を開いている間は待つ） */
+  unpeek(force = false) {
+    clearTimeout(this.peekTimer);
+    if (!this.peeking) return;
+    if (!force && document.querySelector('.lw-overlay:not([hidden])')) {
+      this._schedulePeekHide();
+      return;
+    }
+    this.peeking = false;
+    this.el.classList.remove('peek');
+    document.body.classList.remove('lw-tb-peek');
+  }
+
+  _schedulePeekHide() {
+    clearTimeout(this.peekTimer);
+    this.peekTimer = setTimeout(() => this.unpeek(), PEEK_MS);
   }
 
   syncTools() {

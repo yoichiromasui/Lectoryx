@@ -84,7 +84,8 @@ body.lw-compact #stage { top: 0; }
   pointer-events: none;
 }
 .lw-ink canvas { position: absolute; left: 0; display: block; }
-.lw-ink-hl { z-index: 2; mix-blend-mode: multiply; }   /* 蛍光ペン：下の文字を透かす */
+.lw-ink-hl { z-index: 2; display: none; }              /* 蛍光ペンの線があるページだけ表示（合成は電池を使うため） */
+.lw-ink-hl.lw-active { display: block; mix-blend-mode: multiply; }   /* 蛍光ペン：下の文字を透かす */
 .lw-ink-pen { z-index: 3; }
 canvas.lw-ink-live { z-index: 4; height: auto; }
 canvas.lw-ink-live.lw-blend { mix-blend-mode: multiply; }
@@ -246,23 +247,28 @@ body[data-tool="text"] .lw-page .lw-text { outline: 1px dashed rgba(31, 95, 214,
 .lw-width.lw-tsize span { background: none; box-shadow: none; border-radius: 0; color: #2a2e36; font: 600 13px/1 system-ui, -apple-system, sans-serif; }
 .lw-tb-seg .lw-seg-btn { padding: 6px 10px; }
 
-/* 最小化：右上の小さなパレット */
-.lw-toolbar.compact {
-  left: auto;
-  right: calc(10px + env(safe-area-inset-right));
+/* 授業モード：ツールバーを隠し、右上の小さなボタンだけにする（押すと一時的に表示） */
+.lw-toolbar.compact { display: none; }
+.lw-toolbar.compact.peek { display: flex; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16); }
+.lw-tb-handle {
+  position: absolute;
   top: calc(8px + env(safe-area-inset-top));
-  height: 46px;
-  padding: 0 4px;
-  border: 1px solid var(--tb-border);
-  border-radius: 14px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.14);
-  gap: 2px;
+  right: calc(10px + env(safe-area-inset-right));
+  z-index: 9;
+  width: 34px; height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(40, 44, 56, 0.10);
+  color: rgba(40, 44, 56, 0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
 }
-.lw-toolbar.compact .lw-tb-btn:not(.keep),
-.lw-toolbar.compact .lw-tb-opts,
-.lw-toolbar.compact .lw-tb-spacer { display: none; }
-.lw-toolbar.compact .lw-tb-tools { border: 0; padding: 0 2px; }
-.lw-toolbar.compact .lw-tb-pageno { min-width: 54px; font-size: 14px; }
+.lw-tb-handle svg { width: 20px; height: 20px; }
+body.lw-compact:not(.lw-tb-peek) .lw-tb-handle { display: flex; }
 
 @media (max-width: 900px) {
   :root { --tb-h: 46px; }

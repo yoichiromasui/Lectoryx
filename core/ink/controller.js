@@ -64,6 +64,7 @@ export class InkController {
       const { top, bottom } = this.view.visibleRange();
       this.view.live.place(top, bottom - top, PAGE_WIDTH, this.view.inkResolution);
       this.view.live.setBlend(tool === 'hl');
+      if (tool === 'hl') this.view.syncHlLayer(true);
       this.mode = 'draw';
       this._render();
       return true;
