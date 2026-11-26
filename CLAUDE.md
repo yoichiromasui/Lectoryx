@@ -90,6 +90,7 @@ core/                      共通システム（講義に依存しない）
   widgets/numeric.js       数値計算の道具（w.math）
   widgets/index.js         教材中のウィジェット要素の初期化
   ui/toolbar.js            上部ツールバー（授業モード：設定 compact で隠し、右上の小さなボタンで一時表示）
+  ui/pagebuttons.js        授業モードのページ送りボタン（左下。短いタップのみ・手のひら／ペン直後／なぞりは無視）
   ui/panels.js             ページ一覧・メニュー・トースト
   ui/icons.js              アイコン
   ui/files.js              ファイルの保存（iPad は共有シート）・選択
@@ -327,6 +328,7 @@ const p = w.plot({ width, height, x:[xmin,xmax], y:[ymin,ymax], xlabel, ylabel, 
 - 入力：`ink/input.js`。ペンは `touchstart`（`touchType==='stylus'`）を `preventDefault` してスクロール等を抑止し、`pointerdown` をキャプチャ段階で `stopPropagation`。指はネイティブのスクロール・教材操作に任せる。
 - パームリジェクション：ペン接触中とペンを離して `PALM_GUARD_MS`（450ms）は指を無効化。ペンを使ってから `PALM_RECENT_MS`（1.5 秒）以内は接触半径 `PALM_RADIUS`（45）超のタッチも無効。ツールバーは `TOOLBAR_PALM_GUARD_MS`（250ms）。長くすると「指で操作しても反応しない＝固まった」ように見えるので注意（実機で「固まる」と言われた。2026-11）。無視したタッチは `diag` に記録。
 - ペン先のダブルタップ（`DOUBLE_TAP`：1 回 250ms 以内・ずれ 4px 以内、間隔 350ms 以内・距離 9px 以内）でペン/蛍光ペン⇔消しゴム（`InkController._tapEnd`）。2 回のタップで付いた点・消えた線は `view.revertOps` で取り消し（やり直し履歴も元に戻す）。設定 `penDoubleTap`。Apple Pencil 本体のダブルタップ（UIPencilInteraction）は Web には届かないので使えない。
+- ページ送り：`view.turn(±1)`（`next/prev`）。設定 `pageTransition` が `slide` なら、今のページが横に抜けて次のページが反対側から滑り込む（150ms＋200ms。動きの最中は `view.turning` で書き込みを受け付けない。prefers-reduced-motion では即時）。スワイプはスライド時、指に合わせて `.lw-sizer` を `translateX` で動かし、十分に引っ張る（画面幅の 18% か 80px）か素早く払うと送る。
 - ページ送りのスワイプはグラフの上でも有効（`[data-ink=off]` の操作パネル・`lwWantsPointer` が真の点・動画等は除く）。ドラッグ点のあるグラフは `touch-action:none` にせず、点の上で始まった `touchstart` だけ `preventDefault`（グラフの上でもスクロールできるように）。
 - 描画：確定セグメントはタイル（高さ 512 の論理 px）へ追記、末尾の暫定セグメントだけ `LiveLayer` に描く（遅延ゼロで滑らか）。タイルは表示範囲 ± 0.5 画面だけ確保（長いページでもメモリ一定）。
 - `getCoalescedEvents()` があれば使う。点は 0.35 論理px 未満の間隔を間引き、座標は 0.1、筆圧は 0.01 に丸めて保存。
@@ -388,7 +390,7 @@ LibraryRecord = { id, path, current:版, source, versions:{ 版: { entry, downlo
 
 ### 6.7 改修時の確認
 - `python tools/build.py --check`：教材の検証（エラー 0 件）。
-- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 101**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
+- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 111**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
 - `http://localhost:8000/tests/offline.html` が **PASS 39**（Service Worker の「テスト用オフライン」で、ダウンロード → ネットワークなしでライブラリ・講義・数式フォント・画像・PDF・ウィジェット・書き込み・値と閲覧位置の復元・動画の Range、教材の更新と旧版保持・失敗時の保持・旧版削除、バックアップと復元、ファイル消失時の扱いを検証）。
 - `pip install websocket-client` の上で `python tests/e2e_prod.py` が **ALL PASSED 27/27**（本番ビルドを `/repo/` 以下で配信 → ダウンロード → サーバを止めて動作 → アプリの新版を配信しても押すまで切り替わらない（完全に閉じて起動し直しても）→ 更新後も書き込み・教材が残る。続けて：教材なしのアプリ（--app-only）を配信し、教材は GitHub API の模擬サーバ（別オリジン・トークン必須・CORS）から取得、設定の案内・トークン誤り・ダウンロードして開く・未ダウンロードは開けない・バックアップにトークンなし・停止後も動作）。sw.js・pwa.js・ライブラリ・配信元を触ったら必ず実行。
 - 実際の GitHub API について確認済み（2026-11）：ブラウザから `Authorization` 付きで CORS が通る、`application/vnd.github.raw+json` で本体が返る（`Content-Type` も同じ独自形式）、`git/ref/heads/<branch>` で SHA が取れる。

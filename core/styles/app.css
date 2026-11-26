@@ -270,6 +270,34 @@ body[data-tool="text"] .lw-page .lw-text { outline: 1px dashed rgba(31, 95, 214,
 .lw-tb-handle svg { width: 20px; height: 20px; }
 body.lw-compact:not(.lw-tb-peek) .lw-tb-handle { display: flex; }
 
+/* 授業モードのページ送りボタン（左下。core/ui/pagebuttons.js） */
+.lw-pagebtns {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 9;
+  display: none;
+  gap: 8px;
+}
+body.lw-compact.lw-pagebtns-on .lw-pagebtns { display: flex; }
+.lw-pagebtn {
+  width: 46px; height: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(40, 44, 56, 0.10);
+  color: rgba(40, 44, 56, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.lw-pagebtn:active { background: rgba(40, 44, 56, 0.2); }
+.lw-pagebtn:disabled { opacity: 0.3; cursor: default; }
+
 @media (max-width: 900px) {
   :root { --tb-h: 46px; }
   .lw-toolbar { gap: 2px; }

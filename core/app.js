@@ -13,6 +13,7 @@ import { Settings } from './settings.js';
 import { Book } from './book.js';
 import { PageView } from './view.js';
 import { Toolbar } from './ui/toolbar.js';
+import { PageButtons } from './ui/pagebuttons.js';
 import { Overview, Menu, toast } from './ui/panels.js';
 import { SWIPE, TOOLBAR_PALM_GUARD_MS } from './config.js';
 import { h, escapeHtml, isAppleTouchDevice } from './util.js';
@@ -98,6 +99,7 @@ async function main() {
   const toolbar = new Toolbar({ root, view, settings, actions });
   guardPalm(toolbar.el, view);
   guardPalm(toolbar.handle, view);
+  new PageButtons({ root, view, settings });
   // ペン先のダブルタップで切り替えたとき
   view.on('tool-toggled', (tool) => toast(tool === 'eraser' ? '消しゴム（ペン先のダブルタップで切り替え）' : tool === 'hl' ? '蛍光ペン' : 'ペン', 1200));
 
@@ -308,30 +310,58 @@ function guardPalm(el, view) {
 }
 
 /**
- * 指 1 本の素早い横スワイプでページ送り。
+ * 指 1 本の横スワイプでページ送り。
+ *   スライド（設定 pageTransition='slide'）：ページが指について横に動き、十分に引っ張るか素早く払うと次のページへ。
+ *   すぐ（'instant'）：素早い横スワイプでぱっと切り替わる。
  * グラフ（ウィジェットの表示部）の上でもページを送れる。スライダーなどの操作パネル、グラフ上の
  * ドラッグできる点、動画・埋め込み・リンク・ボタンの上では無効（それぞれの操作を優先）。ペン使用直後も無効。
  */
 function installSwipe({ stage, view, settings }) {
   let st = null;
+  const slide = () => settings.get('pageTransition') === 'slide' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   stage.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'touch') return;
-    if (st) { st.multi = true; return; }
-    if (!settings.get('swipe') || !e.isPrimary || view.input.penGuard()) return;
+    if (st) { st.multi = true; view.slideBack(); return; }
+    if (!settings.get('swipe') || !e.isPrimary || view.input.penGuard() || view.turning) return;
     if (e.target.closest?.('[data-ink="off"], iframe, video, audio, a, button, input, select, textarea, .lw-text-editor')) return;
     if (typeof e.target.lwWantsPointer === 'function' && e.target.lwWantsPointer(e)) return;
-    st = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), multi: false };
+    st = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), multi: false, axis: null, dx: 0 };
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!st || e.pointerId !== st.id || st.multi || !slide() || view.turning) return;
+    const dx = e.clientX - st.x;
+    const dy = e.clientY - st.y;
+    if (!st.axis) {
+      if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+      st.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
+    }
+    if (st.axis !== 'x') return;
+    const canGo = dx < 0 ? view.index < view.book.length - 1 : view.index > 0;
+    st.dx = canGo ? dx : dx * 0.25;   // 最初・最後のページでは少しだけ動いて戻る
+    view.slideTo(st.dx, false);
   });
   stage.addEventListener('pointerup', (e) => {
     if (!st || e.pointerId !== st.id) return;
-    const dx = e.clientX - st.x;
-    const dy = e.clientY - st.y;
-    const ok = !st.multi && Math.abs(dx) > SWIPE.minDx && Math.abs(dy) < Math.abs(dx) * SWIPE.maxSlope &&
-      performance.now() - st.t < SWIPE.maxMs && !view.input.penGuard();
+    const s = st;
     st = null;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    const dt = performance.now() - s.t;
+    if (slide()) {
+      const W = stage.clientWidth;
+      const go = s.axis === 'x' && !s.multi && !view.input.penGuard() &&
+        (Math.abs(dx) > Math.max(80, W * 0.18) || (Math.abs(dx) > 40 && dt < 300));
+      if (go) view.turn(dx < 0 ? 1 : -1);
+      else view.slideBack();
+      return;
+    }
+    const ok = !s.multi && Math.abs(dx) > SWIPE.minDx && Math.abs(dy) < Math.abs(dx) * SWIPE.maxSlope &&
+      dt < SWIPE.maxMs && !view.input.penGuard();
     if (ok) (dx < 0 ? view.next() : view.prev());
   });
-  stage.addEventListener('pointercancel', (e) => { if (st && e.pointerId === st.id) st = null; });
+  stage.addEventListener('pointercancel', (e) => {
+    if (st && e.pointerId === st.id) { st = null; view.slideBack(); }
+  });
 }
 
 function exportInk(book, lecture) {

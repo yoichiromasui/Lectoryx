@@ -130,6 +130,7 @@ async function run() {
   await win.__lw.store.clearLecture(LECTURE);
   win = await loadFrame('#1');
   const lw = () => win.__lw;
+  lw().settings.set('pageTransition', 'instant');   // ページ送りはすぐ切り替え（スライドは 9g で確認）
   check('起動・3ページ', lw().book.length === 3);
   check('KaTeX 描画', !!win.document.querySelector('.lw-content .katex'));
   check('KaTeX マクロ (\\R)', !!win.document.querySelector('.lw-content .mathbb, .lw-content .amsrm'));
@@ -338,6 +339,65 @@ async function run() {
     await frames(win, 2);
     check('授業モードをやめると元のツールバー', shown(tb) && !shown(handle) && lw().view.stage.getBoundingClientRect().top > 0);
     lw().settings.set('tool', 'pen');
+  }
+
+  // ---- 9g. ページの切り替え（スライド）と授業モードのページ送りボタン ----
+  {
+    const v = lw().view;
+    lw().settings.set('pageTransition', 'slide');
+    v.show(0);
+    v.next();
+    check('スライド：切り替えの動きの間は書き込みを受け付けない', v.turning === true && !v.ink.begin({ x: 100, y: 100, p: 0.3, type: 'pen' }));
+    await sleep(450);
+    check('スライドでページ送り（動きが終わると元の位置）', v.index === 1 && !v.turning && v.sizer.style.transform === '');
+    await sleep(500);   // ペンの直後は指を無視するので待つ
+    const sr = v.stage.getBoundingClientRect();
+    const drag = (xs) => {
+      const id = nextId++;
+      const ev = (type, x) => v.stage.dispatchEvent(new win.PointerEvent(type, { bubbles: true, cancelable: true, pointerId: id, pointerType: 'touch', isPrimary: true, clientX: sr.left + x, clientY: sr.top + 400, buttons: type === 'pointerup' ? 0 : 1 }));
+      ev('pointerdown', xs[0]);
+      for (const x of xs.slice(1, -1)) ev('pointermove', x);
+      return () => ev('pointerup', xs[xs.length - 1]);
+    };
+    let up = drag([900, 800, 600, 600]);
+    const moved = v.sizer.style.transform;
+    up();
+    await sleep(450);
+    check('スライド：ページが指について動き、十分に引っ張ると次のページ', /translateX\(-300px\)/.test(moved) && v.index === 2, `${moved} index=${v.index}`);
+    up = drag([500, 530, 530]);
+    up();
+    await sleep(300);
+    check('スライド：少しだけ引っ張って離すと元に戻る', v.index === 2 && v.sizer.style.transform === '');
+    // 授業モードのページ送りボタン
+    const doc = win.document;
+    const btns = doc.querySelector('.lw-pagebtns');
+    lw().settings.set('compact', true);
+    check('授業モードで左下にページ送りボタン', win.getComputedStyle(btns).display !== 'none');
+    const prevB = btns.querySelector('[title="前のページ"]');
+    const br = prevB.getBoundingClientRect();
+    const tap = (o = {}) => {
+      const id = nextId++;
+      const base = { bubbles: true, cancelable: true, pointerId: id, pointerType: o.type || 'touch', isPrimary: true, clientX: br.left + 20, clientY: br.top + 20, width: o.size || 20, height: o.size || 20 };
+      prevB.dispatchEvent(new win.PointerEvent('pointerdown', { ...base, buttons: 1 }));
+      if (o.move) prevB.dispatchEvent(new win.PointerEvent('pointermove', { ...base, clientX: base.clientX + o.move, buttons: 1 }));
+      prevB.dispatchEvent(new win.PointerEvent('pointerup', { ...base, clientX: base.clientX + (o.move || 0), buttons: 0 }));
+    };
+    tap({ size: 200 });
+    await sleep(450);
+    check('ページ送りボタン：手のひら（大きい接触）は無視', v.index === 2);
+    tap({ type: 'pen', move: 40 });
+    await sleep(450);
+    check('ページ送りボタン：ペンでなぞっただけでは送らない', v.index === 2);
+    tap();
+    await sleep(450);
+    check('ページ送りボタン：短いタップで前のページ', v.index === 1);
+    lw().settings.set('pageButtons', false);
+    check('設定でページ送りボタンを隠せる', win.getComputedStyle(btns).display === 'none');
+    lw().settings.set('pageButtons', true);
+    lw().settings.set('compact', false);
+    check('授業モードでなければボタンは出ない', win.getComputedStyle(btns).display === 'none');
+    lw().settings.set('pageTransition', 'instant');
+    v.show(0);
   }
 
   // ---- 10. 全消去と Undo ----

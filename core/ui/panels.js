@@ -129,6 +129,16 @@ export class Menu {
       toggle('ペン先のダブルタップでペン⇔消しゴム', 'penDoubleTap'),
       toggle('指でも書く（ペンがないとき）', 'fingerDraw'),
       toggle('指の横スワイプでページ送り', 'swipe'),
+      h('div', { class: 'lw-menu-label' }, 'ページの切り替え方'),
+      h('div', { class: 'lw-seg' }, [['slide', 'スライド（滑らかに）'], ['instant', 'すぐ切り替え']].map(([v, label]) => h('button', {
+        type: 'button', class: 'lw-seg-btn' + (s.get('pageTransition') === v ? ' on' : ''),
+        onclick: (e) => {
+          s.set('pageTransition', v);
+          for (const b of e.currentTarget.parentNode.children) b.classList.remove('on');
+          e.currentTarget.classList.add('on');
+        },
+      }, label))),
+      toggle('授業モードでページ送りボタン（左下）を表示', 'pageButtons'),
       h('hr'),
       item('PDF に書き出す（書き込み付き）', () => this.actions.exportPdf()),
       h('div', { class: 'lw-menu-label' }, 'バックアップ（端末間の移動・復元用）'),

@@ -46,7 +46,7 @@ export class InkController {
   /** pt = { x, y, p, type }（論理座標）。描画を開始したら true */
   begin(pt) {
     const page = this.view.page;
-    if (!page || this.mode) return false;
+    if (!page || this.mode || this.view.turning) return false;
     const tool = this.settings.get('tool');
     this.page = page;
     // やり直しの履歴はタップの点を足すと消えるので、元に戻せるよう控えておく

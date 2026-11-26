@@ -132,8 +132,53 @@ export class PageView extends Emitter {
     this.emit('page', index);
   }
 
-  next() { if (this.index < this.book.length - 1) this.show(this.index + 1); }
-  prev() { if (this.index > 0) this.show(this.index - 1); }
+  next() { this.turn(1); }
+  prev() { this.turn(-1); }
+
+  /** ページ送りの切り替え中（スライドの動きの最中は書き込みを受け付けない） */
+  get turning() { return !!this._turning; }
+
+  /**
+   * 前後のページへ送る。設定 pageTransition が 'slide' なら、今のページが横に抜けて
+   * 次のページが反対側から滑り込む（指で引っ張っている途中の位置から続けて動く）。
+   */
+  turn(delta) {
+    const to = this.index + delta;
+    if (to < 0 || to >= this.book.length) { this.slideBack(); return; }
+    if (this._turning) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (this.settings.get('pageTransition') !== 'slide' || reduce) {
+      this.slideTo(0, false);
+      this.show(to);
+      return;
+    }
+    this._turning = true;
+    this.input.finish();
+    const el = this.sizer;
+    const W = this.stage.clientWidth;
+    const dir = delta > 0 ? -1 : 1;
+    el.style.transition = 'transform 150ms ease-in, opacity 150ms ease-in';
+    el.style.transform = `translateX(${dir * W * 0.5}px)`;
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.style.transition = 'none';
+      this.show(to);
+      el.style.transform = `translateX(${-dir * W * 0.5}px)`;
+      void el.offsetWidth;   // いったん反対側に置いてから滑り込ませる
+      el.style.transition = 'transform 200ms ease-out, opacity 200ms ease-out';
+      el.style.transform = '';
+      el.style.opacity = '';
+      setTimeout(() => { el.style.transition = ''; this._turning = false; }, 220);
+    }, 150);
+  }
+
+  /** 指で引っ張っている間のページの横位置（px）。animate なら滑らかに動かす */
+  slideTo(x, animate) {
+    const el = this.sizer;
+    el.style.transition = animate ? 'transform 180ms ease-out' : 'none';
+    el.style.transform = x ? `translateX(${x}px)` : '';
+  }
+  slideBack() { if (this.sizer.style.transform) this.slideTo(0, true); }
 
   /** ページの教材 DOM（初回のみ生成してキャッシュ） */
   content(page) {

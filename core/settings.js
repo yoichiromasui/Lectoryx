@@ -20,6 +20,8 @@ const DEFAULTS = {
   penDoubleTap: true,        // ペン先のダブルタップでペン⇔消しゴム
   fingerDraw: false,         // 指でも書く（Apple Pencil がないとき用）
   swipe: true,               // 指の横スワイプでページ送り
+  pageTransition: 'slide',   // ページの切り替え方：'slide'（横に滑る）| 'instant'（すぐ切り替わる）
+  pageButtons: true,         // 授業モードで左下にページ送りボタンを出す
   compact: false,            // ツールバー最小化
 };
 
