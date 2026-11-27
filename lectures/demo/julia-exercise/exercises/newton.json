@@ -4,7 +4,7 @@
  "id": "newton",
  "title": "ニュートン法で平方根を求める",
  "prompt": "$a > 0$ の平方根を、ニュートン法\n$$\nx_{k+1} = x_k - \\frac{x_k^2 - a}{2x_k}\n$$\nで求める関数 `newton_sqrt(a; tol=1e-12)` を作りなさい。初期値は $x_0 = \\max(a, 1)$ とし、更新量 $|x_{k+1} - x_k|$ が `tol` 未満になったら終了します。\n$a < 0$ のときは `DomainError` を投げること（`throw(DomainError(a, \"負の数\"))`）。$a = 0$ なら $0$ を返します。\n",
- "template": "function newton_sqrt(a; tol=1e-12)\n    # ここに書く\nend\n",
+ "template": "# デモ：実行・採点をすぐ試せるように、答えを入れてあります（消して自分で書いてもかまいません）\nfunction newton_sqrt(a; tol=1e-12)\n    a < 0 && throw(DomainError(a, \"負の数\"))\n    a == 0 && return 0.0\n    x = max(a, 1.0)\n    while true\n        x_new = x - (x^2 - a) / (2x)\n        if abs(x_new - x) < tol\n            return x_new\n        end\n        x = x_new\n    end\nend\n\nprintln(\"√2 ≈ \", newton_sqrt(2.0))\n",
  "timeLimitMs": 3000,
  "env": null,
  "tests": [
@@ -70,6 +70,6 @@
    "code": "newton_sqrt(-1.0)\n"
   }
  ],
- "source": "28687144c97545e92ba2",
+ "source": "24c41420688f0069ca51",
  "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
 }

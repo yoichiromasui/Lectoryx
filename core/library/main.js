@@ -19,7 +19,7 @@ import {
 import { createBackup, inspectBackup, restoreBackup } from './backup.js';
 import { saveFile, pickFile, dateStamp } from '../ui/files.js';
 import { startDiag, diag, diagText } from '../diag.js';
-import { capturePairing } from '../exercise/native.js';
+import { capturePairing, isSafariLike } from '../exercise/native.js';
 
 const S = {
   store: null,
@@ -65,7 +65,13 @@ async function main() {
   });
   startDiag('ライブラリ');
   // Lectoryx ローカル実行ツール（PC の Julia）が開いたペアリング用 URL（#lectoryx=<port>.<token>）
-  if (capturePairing()) setTimeout(() => toast('PC の Julia とつなぎました。演習のある講義を開いて「開く」を押してください', 7000), 300);
+  if (capturePairing()) {
+    // Safari は https のページから PC の Julia（127.0.0.1）への接続を禁止しているので、ここで結び付けても使えない
+    const safari = isSafariLike() && location.protocol === 'https:';
+    setTimeout(() => toast(safari
+      ? 'Safari では PC の Julia を使えません。実行ツールのウィンドウの「ペアリング用 URL」を Chrome・Edge・Firefox で開いてください'
+      : 'PC の Julia とつなぎました。演習のある講義を開いて「開く」を押してください', safari ? 12000 : 7000), 300);
+  }
   S.store = await openStore();
   S.appConfig = await fetch('app-config.json').then((r) => (r.ok ? r.json() : {}), () => ({})).catch(() => ({}));
   S.dl = new Downloader(S.store);

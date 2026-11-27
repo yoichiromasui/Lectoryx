@@ -15,15 +15,22 @@ x_{k+1} &= x_k + \tfrac{h}{6}\,(k_1 + 2k_2 + 2k_3 + k_4)
 $$
 
 ```julia template
+# デモ：実行・採点をすぐ試せるように、答えを入れてあります（消して自分で書いてもかまいません）
 function rk4(f, x0, t0, t1, h)
     x = copy(x0)
     n = round(Int, (t1 - t0) / h)
     for k in 0:n-1
         t = t0 + k * h
-        # ここに書く
+        k1 = f(x, t)
+        k2 = f(x + h / 2 * k1, t + h / 2)
+        k3 = f(x + h / 2 * k2, t + h / 2)
+        k4 = f(x + h * k3, t + h)
+        x = x + h / 6 * (k1 + 2k2 + 2k3 + k4)
     end
     return x
 end
+
+println("RK4: ", rk4((x, t) -> -x, [1.0], 0.0, 1.0, 0.01)[1], "  厳密解 e^(-1) = ", exp(-1))
 ```
 
 ```julia solution

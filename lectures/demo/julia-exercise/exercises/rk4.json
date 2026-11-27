@@ -4,7 +4,7 @@
  "id": "rk4",
  "title": "ルンゲ・クッタ法（RK4）で微分方程式を解く",
  "prompt": "微分方程式 $\\dot{x} = f(x, t)$ を、刻み幅 $h$ の 4 次のルンゲ・クッタ法で $t_0$ から $t_1$ まで解き、$t = t_1$ での $x$ を返す関数 `rk4(f, x0, t0, t1, h)` を作りなさい。\n$x$ はベクトル、`f(x, t)` は $\\dot{x}$（ベクトル）を返します。ステップ数は `round(Int, (t1 - t0) / h)` とします。\n\n$$\n\\begin{aligned}\nk_1 &= f(x_k,\\ t_k), & k_2 &= f\\!\\left(x_k + \\tfrac{h}{2} k_1,\\ t_k + \\tfrac{h}{2}\\right),\\\\\nk_3 &= f\\!\\left(x_k + \\tfrac{h}{2} k_2,\\ t_k + \\tfrac{h}{2}\\right), & k_4 &= f(x_k + h k_3,\\ t_k + h),\\\\\nx_{k+1} &= x_k + \\tfrac{h}{6}\\,(k_1 + 2k_2 + 2k_3 + k_4)\n\\end{aligned}\n$$\n",
- "template": "function rk4(f, x0, t0, t1, h)\n    x = copy(x0)\n    n = round(Int, (t1 - t0) / h)\n    for k in 0:n-1\n        t = t0 + k * h\n        # ここに書く\n    end\n    return x\nend\n",
+ "template": "# デモ：実行・採点をすぐ試せるように、答えを入れてあります（消して自分で書いてもかまいません）\nfunction rk4(f, x0, t0, t1, h)\n    x = copy(x0)\n    n = round(Int, (t1 - t0) / h)\n    for k in 0:n-1\n        t = t0 + k * h\n        k1 = f(x, t)\n        k2 = f(x + h / 2 * k1, t + h / 2)\n        k3 = f(x + h / 2 * k2, t + h / 2)\n        k4 = f(x + h * k3, t + h)\n        x = x + h / 6 * (k1 + 2k2 + 2k3 + k4)\n    end\n    return x\nend\n\nprintln(\"RK4: \", rk4((x, t) -> -x, [1.0], 0.0, 1.0, 0.01)[1], \"  厳密解 e^(-1) = \", exp(-1))\n",
  "timeLimitMs": 5000,
  "env": null,
  "tests": [
@@ -101,6 +101,6 @@
    }
   }
  ],
- "source": "086932b7ca521d1124c2",
+ "source": "3d37b920540bfdd59387",
  "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
 }

@@ -4,7 +4,7 @@
  "id": "poles",
  "title": "2 次系の極",
  "prompt": "2 次系 $G(s) = \\dfrac{\\omega_n^2}{s^2 + 2\\zeta\\omega_n s + \\omega_n^2}$ の極（分母 $=0$ の根）を求める関数 `poles(ζ, ωn)` を作りなさい。\n戻り値は 2 つの極を **虚部の小さい順**（虚部が同じなら実部の小さい順）に並べた複素数のベクトルとします。\nヒント：判別式 `D` を `sqrt(complex(D))` で計算する。並べ替えは `sort(sort(p, by = real), by = imag)`（実部で並べてから虚部で並べる）。\n",
- "template": "function poles(ζ, ωn)\n    # ここに書く\nend\n",
+ "template": "# デモ：実行・採点をすぐ試せるように、答えを入れてあります（消して自分で書いてもかまいません）\nfunction poles(ζ, ωn)\n    b = 2ζ * ωn\n    D = complex(b^2 - 4ωn^2)\n    p = [(-b - sqrt(D)) / 2, (-b + sqrt(D)) / 2]\n    return sort(sort(p, by = real), by = imag)\nend\n\npoles(0.5, 1.0)\n",
  "timeLimitMs": 5000,
  "env": null,
  "tests": [
@@ -122,6 +122,6 @@
    "code": "p = poles(0.3, 5.0)\nprod(p) ≈ 25 && sum(p) ≈ -3.0\n"
   }
  ],
- "source": "86c233bb7b1f7d544119",
+ "source": "74fb301f3bac5713a9ff",
  "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
 }

@@ -11,9 +11,21 @@ $$
 $a < 0$ のときは `DomainError` を投げること（`throw(DomainError(a, "負の数"))`）。$a = 0$ なら $0$ を返します。
 
 ```julia template
+# デモ：実行・採点をすぐ試せるように、答えを入れてあります（消して自分で書いてもかまいません）
 function newton_sqrt(a; tol=1e-12)
-    # ここに書く
+    a < 0 && throw(DomainError(a, "負の数"))
+    a == 0 && return 0.0
+    x = max(a, 1.0)
+    while true
+        x_new = x - (x^2 - a) / (2x)
+        if abs(x_new - x) < tol
+            return x_new
+        end
+        x = x_new
+    end
 end
+
+println("√2 ≈ ", newton_sqrt(2.0))
 ```
 
 ```julia solution

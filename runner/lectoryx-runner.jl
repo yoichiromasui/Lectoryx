@@ -8,7 +8,8 @@
 #     --port N            待ち受けるポート（既定 27182。127.0.0.1 だけで待ち受ける）
 #     --allow-origin URL  接続を許すページの Origin（複数可。既定は lectoryx-runner.toml の origins）
 #     --app URL           ペアリングで開くページ（既定は lectoryx-runner.toml の app）
-#     --open              起動したらブラウザでペアリング用のページを開く
+#     --open              起動したらブラウザでペアリング用のページを開く（Mac は Safari を避けて Chrome・Edge・Firefox など）
+#     --browser NAME      --open で使うブラウザ（Mac はアプリ名 "Google Chrome" など、Windows は chrome / edge / firefox）
 #     --serve DIR         DIR を http://127.0.0.1:N/app/ で配信する（Safari 用のローカル版）
 #     --pool N            環境ごとに待機させておく Julia の数（既定 2）
 #     --new-token         合言葉（トークン）を作り直す（前のペアリングは無効になる）
@@ -49,6 +50,7 @@ Base.@kwdef mutable struct Config
     newtoken::Bool = false
     home::String = get(ENV, "LECTORYX_HOME", joinpath(homedir(), ".lectoryx"))
     batch::Vector{String} = String[]
+    browser::String = ""
 end
 
 const CFG = Config()
@@ -79,9 +81,10 @@ function parse_args(args)
         elseif a == "--pool"; CFG.pool = max(0, parse(Int, val()))
         elseif a == "--new-token"; CFG.newtoken = true
         elseif a == "--home"; CFG.home = abspath(val())
+        elseif a == "--browser"; CFG.browser = val()
         elseif a == "--batch"; CFG.batch = [abspath(val()), abspath(val())]
         elseif a in ("-h", "--help")
-            println(read(@__FILE__, String) |> s -> join(filter(l -> startswith(l, "#"), split(s, '\n'))[2:25], '\n'))
+            println(join(collect(Iterators.takewhile(l -> startswith(l, "#"), split(read(@__FILE__, String), '\n')))[2:end], '\n'))
             exit(0)
         else
             error("不明なオプション: $a")
@@ -811,17 +814,39 @@ function batch(infile::String, outfile::String)
 end
 
 # ---------------------------------------------------------------- 起動
+# Safari は https のページから 127.0.0.1 への接続を禁止しているので、Mac では既定のブラウザ（多くは Safari）ではなく
+# 入っている Chrome・Edge・Firefox などでペアリング用のページを開く（--browser で指定もできる）
+const MAC_BROWSERS = ["Google Chrome", "Microsoft Edge", "Firefox", "Brave Browser", "Chromium", "Vivaldi"]
+const WIN_BROWSERS = Dict("chrome" => "chrome", "google chrome" => "chrome", "edge" => "msedge", "microsoft edge" => "msedge", "firefox" => "firefox")
+
+function mac_browser()
+    if !isempty(CFG.browser)
+        return CFG.browser
+    end
+    for name in MAC_BROWSERS, dir in ("/Applications", joinpath(homedir(), "Applications"))
+        isdir(joinpath(dir, name * ".app")) && return name
+    end
+    return nothing
+end
+
+"""ペアリング用のページを開く。開いたブラウザの名前（既定のブラウザなら nothing）を返す"""
 function open_browser(url)
     try
         if Sys.iswindows()
-            run(`cmd /c start "" $url`; wait=false)
+            exe = get(WIN_BROWSERS, lowercase(CFG.browser), "")
+            isempty(exe) ? run(`cmd /c start "" $url`; wait=false) : run(`cmd /c start "" $exe $url`; wait=false)
+            return isempty(exe) ? nothing : CFG.browser
         elseif Sys.isapple()
-            run(`open $url`; wait=false)
+            app = mac_browser()
+            app === nothing ? run(`open $url`; wait=false) : run(`open -a $app $url`; wait=false)
+            return app
         else
             run(`xdg-open $url`; wait=false)
         end
-    catch
+    catch e
+        println("ブラウザを開けませんでした（", sprint(showerror, e), "）。上のペアリング用 URL を Chrome などで開いてください。")
     end
+    return nothing
 end
 
 function main(args)
@@ -850,10 +875,17 @@ function main(args)
      接続を許すページ：$(join(filter(o -> !startswith(o, "http://127.0.0.1") && !startswith(o, "http://localhost"), CFG.origins), ", "))
      ペアリング用 URL（このウィンドウは閉じないでください）：
        $(pair)
+     ※ Chrome・Edge・Firefox で開いてください（Safari では使えません）。演習に使うブラウザで、この URL を一度開きます。
     $(isempty(CFG.serve) ? "" : " ローカル版：http://127.0.0.1:$(CFG.port)/app/#lectoryx=$(CFG.port).$(TOKEN[])\n")────────────────────────────────────────────""")
     base_env()
     fill_pool(base_env())
-    CFG.open && open_browser(pair)
+    if CFG.open
+        app = open_browser(pair)
+        if Sys.isapple()
+            println(app === nothing ? "Chrome・Edge・Firefox が見つからないので、既定のブラウザで開きました。Safari では使えないので、Chrome などをインストールしてください。" :
+                                      "$(app) でペアリング用のページを開きました。")
+        end
+    end
     while true
         io = accept(server)
         @async handle(io)

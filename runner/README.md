@@ -14,6 +14,8 @@ Lectoryx の Julia 演習を、**この PC にインストールした Julia** �
    - 初めてのときは OS の確認が出ます。Windows は「詳細情報」→「実行」、Mac は右クリック →「開く」。
    - ターミナルから `julia lectoryx-runner.jl --open` でも起動できます。
 2. ブラウザで Lectoryx のライブラリが開き、「PC の Julia とつなぎました」と出れば準備完了です。
+   - Mac では、Safari ではなく Chrome・Edge・Firefox（入っているもの）で開きます。ブラウザを決めたいときは、ターミナルから `julia lectoryx-runner.jl --open --browser "Google Chrome"`。
+   - 別のブラウザで使いたいときは、ツールのウィンドウに出ている「ペアリング用 URL」を、そのブラウザで開きます。
    - Chrome・Edge では、最初に「このデバイスのほかのアプリやサービスへのアクセス」を **許可** してください。
    - **Safari では使えません**（Safari は Web ページから PC の中のツールへの接続を禁止しています）。Chrome・Edge・Firefox を使ってください。
 3. 演習のある講義を開き、カードの「開く」で問題を解きます。

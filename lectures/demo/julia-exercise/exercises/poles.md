@@ -8,9 +8,15 @@ timeLimit: 5
 ヒント：判別式 `D` を `sqrt(complex(D))` で計算する。並べ替えは `sort(sort(p, by = real), by = imag)`（実部で並べてから虚部で並べる）。
 
 ```julia template
+# デモ：実行・採点をすぐ試せるように、答えを入れてあります（消して自分で書いてもかまいません）
 function poles(ζ, ωn)
-    # ここに書く
+    b = 2ζ * ωn
+    D = complex(b^2 - 4ωn^2)
+    p = [(-b - sqrt(D)) / 2, (-b + sqrt(D)) / 2]
+    return sort(sort(p, by = real), by = imag)
 end
+
+poles(0.5, 1.0)
 ```
 
 ```julia solution
