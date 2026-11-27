@@ -551,6 +551,79 @@ async function run() {
   lw().view.undo();
   lw().view.show(0);
 
+  // ---- 11b. ピンチで拡大（指 2 本。教材と書き込みは一緒に拡大し、ずれない） ----
+  if (typeof win.Touch === 'function' && typeof win.TouchEvent === 'function') {
+    const v = lw().view;
+    await sleep(500);   // ペンを使った直後は指を無視するので待つ
+    const target = win.document.querySelector('.lw-content');
+    const sr = v.stage.getBoundingClientRect();
+    const cx = sr.left + v.stage.clientWidth / 2, cy = sr.top + v.stage.clientHeight / 2;
+    let tid = 500;
+    const fire = (type, touches, changed) => {
+      const ev = new win.TouchEvent(type, { bubbles: true, cancelable: true, touches, targetTouches: touches, changedTouches: changed });
+      target.dispatchEvent(ev);
+      return ev;
+    };
+    /** 中点 (cx, cy) で、指の間隔を ds の順に変える（横に並んだ 2 本の指）。最後の touchmove を返す */
+    const pinch = (ds, r = 10) => {
+      const a = tid++, b = tid++;
+      const at = (d) => [a, b].map((id, k) => new win.Touch({ identifier: id, target, clientX: cx + (k ? d : -d) / 2, clientY: cy, radiusX: r, radiusY: r }));
+      let p = at(ds[0]);
+      fire('touchstart', [p[0]], [p[0]]);
+      fire('touchstart', p, [p[1]]);
+      let mv = null;
+      for (const d of ds.slice(1)) { p = at(d); mv = fire('touchmove', p, p); }
+      fire('touchend', [p[0]], [p[1]]);
+      fire('touchend', [], [p[0]]);
+      return mv;
+    };
+    const r0 = v.layer('pen').r;
+    pinch([200, 210]);
+    check('ピンチ：指の間隔が少し変わっただけでは拡大しない', v.zoom === 1, `zoom=${v.zoom}`);
+    const L0 = v.toLogical(cx, cy);
+    const mv = pinch([200, 220, 330, 440]);
+    const L1 = v.toLogical(cx, cy);
+    check('ピンチで拡大（指の間隔の比。2 本指のスクロールは止める）', Math.abs(v.zoom - 2) < 0.01 && Math.abs(v.scale - 2 * v.fit) < 1e-6 && mv.defaultPrevented,
+      `zoom=${v.zoom} scale=${v.scale} fit=${v.fit}`);
+    check('ピンチ：指の間の点はその場にとどまる', Math.hypot(L1.x - L0.x, L1.y - L0.y) < 2, `${JSON.stringify(L0)} -> ${JSON.stringify(L1)}`);
+    check('拡大中は左右にもスクロールできる', v.stage.classList.contains('lw-zoomed') && v.stage.scrollWidth > v.stage.clientWidth + 10 && v.stage.scrollLeft > 0,
+      `sw=${v.stage.scrollWidth} cw=${v.stage.clientWidth} left=${v.stage.scrollLeft}`);
+    check('拡大すると書き込みを高い解像度で描き直す（位置は同じ）', v.layer('pen').r > r0 && inkPixel(win, 'pen', 450, 400) > 0, `r ${r0} -> ${v.layer('pen').r}`);
+    // 拡大中の指 1 本の横の動きはスクロール（ページを送らない）
+    {
+      const id = nextId++;
+      const o = (x, buttons) => ({ bubbles: true, cancelable: true, pointerId: id, pointerType: 'touch', isPrimary: true, clientX: x, clientY: cy, buttons });
+      v.stage.dispatchEvent(new win.PointerEvent('pointerdown', o(cx + 300, 1)));
+      v.stage.dispatchEvent(new win.PointerEvent('pointermove', o(cx, 1)));
+      v.stage.dispatchEvent(new win.PointerEvent('pointerup', o(cx - 300, 0)));
+      await sleep(300);
+      check('拡大中はスワイプでページを送らない', v.index === 0 && v.zoom > 1, `index=${v.index}`);
+    }
+    // 拡大中に書いても教材と同じ論理座標に記録される（横にスクロールしていても）
+    const n0 = v.page.state.strokes.length;
+    stroke(win, line(480, 330, 560, 330));
+    const sp = v.page.state.strokes[n0]?.p || [];
+    check('拡大中に書いた線も同じ論理座標', sp.length > 0 && Math.abs(sp[0] - 480) < 1 && Math.abs(sp[1] - 330) < 1 && inkPixel(win, 'pen', 520, 330) > 0,
+      `p0=${sp[0]},${sp[1]}`);
+    v.undo();
+    pinch([400, 420, 300]);
+    check('ピンチ：ペンを使った直後は拡大縮小しない（手のひら）', Math.abs(v.zoom - 2) < 0.01, `zoom=${v.zoom}`);
+    await sleep(500);
+    pinch([400, 380, 100]);
+    check('ピンチで等倍まで縮める（それ以上は縮まない）', v.zoom === 1 && !v.stage.classList.contains('lw-zoomed') && v.stage.scrollLeft === 0,
+      `zoom=${v.zoom} left=${v.stage.scrollLeft}`);
+    pinch([200, 160, 600], 60);
+    check('ピンチ：接触の大きいタッチ（手のひら）では拡大しない', v.zoom === 1, `zoom=${v.zoom}`);
+    v.setZoom(10);
+    check('拡大率の上限', Math.abs(v.zoom - 3) < 1e-6, `zoom=${v.zoom}`);
+    v.next();
+    check('ページを切り替えると等倍に戻る', v.index === 1 && v.zoom === 1 && v.stage.scrollLeft === 0 && !v.stage.classList.contains('lw-zoomed'),
+      `index=${v.index} zoom=${v.zoom}`);
+    v.show(0);
+  } else {
+    check('ピンチで拡大（Touch 非対応のため省略）', true);
+  }
+
   // ---- 12. 白紙ページ・拡張 ----
   lw().view.addBlankPage('grid');
   check('白紙ページ追加', lw().book.length === 4 && lw().view.index === 1 && lw().view.page.kind === 'blank');

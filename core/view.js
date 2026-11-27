@@ -8,7 +8,7 @@
 // CSS transform で拡大縮小する。画面サイズ・回転・スクロールが変わっても
 // 両者の相対位置は変わらない。
 // =============================================================
-import { PAGE_WIDTH, MIN_VISIBLE_RATIO, MAX_INK_RESOLUTION, TILE_MARGIN_SCREENS, EXTEND_RATIO } from './config.js';
+import { PAGE_WIDTH, MIN_VISIBLE_RATIO, MAX_INK_RESOLUTION, MAX_ZOOM, TILE_MARGIN_SCREENS, EXTEND_RATIO } from './config.js';
 import { h, Emitter, rafThrottle, clamp, rect } from './util.js';
 import { diag, timed } from './diag.js';
 import { InkLayer, LiveLayer } from './ink/layer.js';
@@ -43,6 +43,8 @@ export class PageView extends Emitter {
     this.texts = new TextLayer(this);
 
     this.scale = 1;
+    this.fit = 1;      // 画面に合わせた倍率（拡大していないときの scale）
+    this.zoom = 1;     // ピンチによる拡大率（scale = fit × zoom。ページを切り替えると 1 に戻る）
     this.dpr = window.devicePixelRatio || 1;
     this.H = 0;
     this.minH = 0;
@@ -111,6 +113,7 @@ export class PageView extends Emitter {
     this.index = index;
     const page = this.book.pages[index];
     this.page = page;
+    this.zoom = 1;   // ページを切り替えたら画面に合わせた大きさに戻す
     const c = this.content(page);
     this.pageEl.prepend(c.el);
     this.applyBackground();
@@ -127,6 +130,7 @@ export class PageView extends Emitter {
     this.updatePdf();
     for (const w of c.widgets) w.show();
     this.stage.scrollTop = (scrollTop ?? c.scrollTop ?? 0) * this.scale;
+    this.stage.scrollLeft = 0;
     this.updateTiles();
     this.contentObserver.observe(c.el);
     this.book.setLastPage(page.id);
@@ -375,16 +379,20 @@ export class PageView extends Emitter {
     const sh = this.stage.clientHeight;
     if (!sw || !sh) return;
 
-    const s = Math.min(sw / PAGE_WIDTH, sh / (PAGE_WIDTH * MIN_VISIBLE_RATIO));
+    const fit = Math.min(sw / PAGE_WIDTH, sh / (PAGE_WIDTH * MIN_VISIBLE_RATIO));
+    const s = fit * this.zoom;
     const dpr = window.devicePixelRatio || 1;
     const scaleChanged = Math.abs(s - this.scale) > 1e-4 || dpr !== this.dpr;
     const logicalTop = this.stage.scrollTop / this.scale;
+    this.fit = fit;
     this.scale = s;
     this.dpr = dpr;
+    this.stage.classList.toggle('lw-zoomed', this.zoom > 1);
 
     // 教材のレイアウトは画面サイズに依存させない（回転で教材だけ動くと書き込みとずれる）。
     // 画面サイズに応じて変わるのはページ下部の余白（＝板書スペース）だけ。
-    const minH = Math.floor(sh / s);
+    // 拡大しても変えない（拡大率ではなく画面に合わせた倍率で決める）。
+    const minH = Math.floor(sh / fit);
     this.minH = minH;
     const base = Math.max(c.el.offsetHeight, minH) + (page.state.extra || 0);
     const H = Math.ceil(Math.max(base, strokesBottom(page.state.strokes) + 24, this.texts.bottom() + 24));
@@ -412,6 +420,50 @@ export class PageView extends Emitter {
       this.hl.updateVisible(top, bottom);
       this.pen.updateVisible(top, bottom);
     });
+  }
+
+  // ---- 拡大（ピンチ。app.js の installPinch） ----
+  // 教材と書き込みは同じ論理座標でページ要素ごと拡大するので、拡大してもずれない。
+
+  /** 画面上の点（client 座標）→ 論理座標 */
+  toLogical(clientX, clientY) {
+    const r = this.pageEl.getBoundingClientRect();
+    const s = r.width / PAGE_WIDTH;
+    return { x: (clientX - r.left) / s, y: (clientY - r.top) / s };
+  }
+
+  /**
+   * ピンチの途中の表示。ページ要素の transform だけを変える（再レイアウト・再描画をしないので軽い。
+   * 拡大した部分は指を離して setZoom で確定するまで少しぼやける）。
+   * 論理座標 (x, y) の点を画面の (clientX, clientY) に、拡大率 zoom で置く。
+   */
+  previewZoom(zoom, { x, y, clientX, clientY }) {
+    const s = this.fit * zoom;
+    const o = this.sizer.getBoundingClientRect();
+    this.pageEl.style.transform = `translate(${clientX - o.left - x * s}px, ${clientY - o.top - y * s}px) scale(${s})`;
+  }
+
+  /**
+   * 拡大率を確定して描き直す（1 = 画面に合わせた大きさ、最大 MAX_ZOOM）。
+   * anchor = { x, y, clientX, clientY }：論理座標 (x, y) の点が画面の (clientX, clientY) に来るようにスクロールする。
+   * 省略時は画面の中央の点を保つ。
+   */
+  setZoom(zoom, anchor) {
+    if (!this.page) return;
+    if (!anchor) {
+      const r = this.stage.getBoundingClientRect();
+      const clientX = r.left + this.stage.clientWidth / 2;
+      const clientY = r.top + this.stage.clientHeight / 2;
+      anchor = { ...this.toLogical(clientX, clientY), clientX, clientY };
+    }
+    const z = clamp(zoom, 1, MAX_ZOOM);
+    this.zoom = z < 1.02 ? 1 : z;
+    this.pageEl.style.transform = `scale(${this.scale})`;   // 途中の表示を消す（layout が新しい倍率にする）
+    this.layout();
+    const p = this.pageEl.getBoundingClientRect();
+    this.stage.scrollLeft += p.left + anchor.x * this.scale - anchor.clientX;
+    this.stage.scrollTop += p.top + anchor.y * this.scale - anchor.clientY;
+    this.updateTiles();
   }
 
   // ---- 手書き関連の操作 ----

@@ -15,8 +15,8 @@ import { PageView } from './view.js';
 import { Toolbar } from './ui/toolbar.js';
 import { PageButtons } from './ui/pagebuttons.js';
 import { Overview, Menu, toast } from './ui/panels.js';
-import { SWIPE, TOOLBAR_PALM_GUARD_MS } from './config.js';
-import { h, escapeHtml, isAppleTouchDevice } from './util.js';
+import { SWIPE, TOOLBAR_PALM_GUARD_MS, MAX_ZOOM, PALM_RADIUS } from './config.js';
+import { h, escapeHtml, isAppleTouchDevice, clamp } from './util.js';
 
 /** KaTeX のフォントを先に読み込む（後から読み込まれて数式の位置がずれるのを防ぐ） */
 async function preloadFonts() {
@@ -148,13 +148,14 @@ async function main() {
   });
   window.addEventListener('pagehide', saveNow);
 
-  // ---- ブラウザ既定動作の抑止（ピンチズーム等） ----
+  // ---- ブラウザ既定動作の抑止（ピンチズーム等。拡大はアプリで行う：installPinch） ----
   for (const t of ['gesturestart', 'gesturechange', 'gestureend']) {
     document.addEventListener(t, (e) => e.preventDefault(), { passive: false });
   }
 
   installKeyboard({ view, settings, overview, menu });
   installSwipe({ stage, view, settings });
+  installPinch({ stage, view });
 
   // デバッグ・テスト用
   window.__lw = { lecture, book, view, settings, store, exportPdf: (o = {}) => exportPdf({ view, book, lecture, ...o }) };
@@ -348,6 +349,7 @@ function installSwipe({ stage, view, settings }) {
     if (st && e.isPrimary) drop('指を離したことが届かなかった');   // 最初の指＝ほかに触れている指はない
     if (st) { st.multi = true; view.slideBack(); return; }
     if (!settings.get('swipe') || !e.isPrimary || view.input.penGuard() || view.turning) return;
+    if (view.zoom > 1) return;   // 拡大中は指 1 本の横の動きはスクロール（installPinch）
     if (e.target.closest?.('[data-ink="off"], iframe, video, audio, a, button, input, select, textarea, .lw-text-editor')) return;
     if (typeof e.target.lwWantsPointer === 'function' && e.target.lwWantsPointer(e)) return;
     st = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), multi: false, axis: null, dx: 0 };
@@ -440,6 +442,82 @@ function installSwipe({ stage, view, settings }) {
       }
     }, true);
   }
+}
+
+/**
+ * 指 2 本のピンチで拡大・縮小（画面に合わせた大きさ 〜 MAX_ZOOM 倍）。
+ * ブラウザのピンチズームは使わない（ツールバーやボタンまで拡大され、手書き・グラフ・PDF のキャンバスは
+ * 元の解像度のまま引き伸ばされる）。lecture.html の user-scalable=no、#stage の touch-action、
+ * gesture イベントの preventDefault で止めてある。
+ * 指の間隔が PINCH_START_PX 以上変わったら始める（それまでは 2 本指のスクロールなどブラウザに任せる。
+ * 手を置いただけで少し拡大され、スワイプが効かなくなるのを防ぐ）。
+ * 指を動かしている間は view.previewZoom（transform だけ。軽い）で、2 本の指の中点の下の点が指についていく。
+ * 指を離したら view.setZoom で倍率を確定して描き直す（等倍の近くまで縮めたら等倍に戻す）。
+ * 拡大中は指 1 本で上下左右にスクロールし、スワイプのページ送りはしない（ボタン・キーで送る。
+ * ページを切り替えると等倍に戻る）。
+ * 始めないとき：ペンで書いている最中・直後、手のひら（接触が PALM_RADIUS より大きい・パームとして無視した指）や
+ * 書いている指（指で書く ON）がある、操作パネル・入力欄・ボタン・動画などの上、グラフのドラッグ点の上、
+ * ページ送りの動きの最中。
+ * 指を離したことが届かなくても、新しい指が触れたときに確定する。
+ */
+const PINCH_START_PX = 16;
+function installPinch({ stage, view }) {
+  // { a, b: 2 本の指の identifier, d0: 始めの指の間隔, z0: 始めの拡大率, L: 始めの中点の下の論理座標,
+  //   m: 今の中点, z: 今の拡大率, on: 拡大を始めたか }
+  let pz = null;
+  const find = (list, id) => { for (const t of list) if (t.identifier === id) return t; return null; };
+  const mid = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+  const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const usable = (t) => {
+    const el = t.target;
+    if (t.touchType === 'stylus' || !el?.closest || !stage.contains(el)) return false;
+    if (view.input.inkTouches.has(t.identifier) || view.input.blockedTouches.has(t.identifier)) return false;
+    if (Math.max(t.radiusX || 0, t.radiusY || 0) > PALM_RADIUS) return false;
+    if (el.closest('[data-ink="off"], iframe, video, audio, a, button, input, select, textarea, .lw-text-editor')) return false;
+    if (typeof el.lwWantsPointer === 'function') {
+      try { if (el.lwWantsPointer({ clientX: t.clientX, clientY: t.clientY, pointerType: 'touch' })) return false; } catch { /* 無視 */ }
+    }
+    return true;
+  };
+  const finish = () => {
+    const p = pz;
+    pz = null;
+    if (!p || !p.on) return;
+    view.setZoom(p.z < 1.05 ? 1 : p.z, { ...p.L, clientX: p.m.x, clientY: p.m.y });
+    diag('zoom', `ピンチで ${view.zoom.toFixed(2)} 倍`, 300);
+  };
+  stage.addEventListener('touchstart', (e) => {
+    if (pz && !(find(e.touches, pz.a) && find(e.touches, pz.b))) finish();   // 指を離したことが届かなかった
+    if (pz || e.touches.length !== 2) return;   // ピンチ中の 3 本目の指は無視
+    const [a, b] = e.touches;
+    if (view.turning || view.input.active || view.input.penGuard() || !usable(a) || !usable(b)) return;
+    const m = mid(a, b);
+    pz = { a: a.identifier, b: b.identifier, d0: Math.max(dist(a, b), 1), z0: view.zoom, L: view.toLogical(m.x, m.y), m, z: view.zoom, on: false };
+  }, { passive: true });
+  stage.addEventListener('touchmove', (e) => {
+    if (!pz) return;
+    const a = find(e.touches, pz.a);
+    const b = find(e.touches, pz.b);
+    if (!a || !b) return;
+    if (!pz.on) {
+      if (Math.abs(dist(a, b) - pz.d0) < PINCH_START_PX) return;
+      pz.on = true;
+      // ここまでに 2 本指でスクロールしていたら、今の中点を基準にし直す
+      const m = mid(a, b);
+      pz.L = view.toLogical(m.x, m.y);
+      pz.d0 = dist(a, b);
+    }
+    if (e.cancelable) e.preventDefault();   // 2 本指でブラウザにスクロールさせない
+    pz.m = mid(a, b);
+    pz.z = clamp(pz.z0 * dist(a, b) / pz.d0, 1, MAX_ZOOM);
+    view.previewZoom(pz.z, { ...pz.L, clientX: pz.m.x, clientY: pz.m.y });
+  }, { passive: false });
+  for (const type of ['touchend', 'touchcancel']) {
+    window.addEventListener(type, (e) => {
+      if (pz && !(find(e.touches, pz.a) && find(e.touches, pz.b))) finish();
+    }, true);
+  }
+  view.on('page', () => { pz = null; });   // ページを切り替えた（表示は等倍に戻っている）
 }
 
 function exportInk(book, lecture) {

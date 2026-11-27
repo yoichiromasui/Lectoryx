@@ -37,9 +37,14 @@ html, body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  touch-action: pan-y;               /* ピンチズーム・ダブルタップズームを無効化 */
+  touch-action: pan-y;               /* ブラウザのピンチズーム・ダブルタップズームを無効化（拡大はアプリで行う：installPinch） */
   background: var(--stage-bg);
   scrollbar-gutter: stable;
+}
+/* ピンチで拡大している間は、指 1 本で上下左右にスクロールする */
+#stage.lw-zoomed {
+  overflow-x: auto;
+  touch-action: pan-x pan-y;
 }
 body.lw-compact #stage { top: 0; }
 

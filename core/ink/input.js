@@ -198,8 +198,11 @@ export class InkInput {
   stopMomentum() {
     const s = this.scroller;
     const top = s.scrollTop;
+    const left = s.scrollLeft;   // 拡大中は横にも慣性スクロールする
     s.style.overflowY = 'hidden';
+    s.style.overflowX = 'hidden';
     s.scrollTop = top;
-    requestAnimationFrame(() => { s.style.overflowY = ''; });
+    s.scrollLeft = left;
+    requestAnimationFrame(() => { s.style.overflowY = ''; s.style.overflowX = ''; });
   }
 }

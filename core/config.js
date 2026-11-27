@@ -18,6 +18,13 @@ export const MIN_VISIBLE_RATIO = 0.62;
 /** 手書きキャンバスの最大解像度倍率（論理px → 実ピクセル） */
 export const MAX_INK_RESOLUTION = 3;
 
+/**
+ * ピンチで拡大できる最大の倍率（1 = 画面に合わせた大きさ）。
+ * 手書きのタイルはページの全幅なので解像度は MAX_INK_RESOLUTION で頭打ちになる。
+ * 大きくしすぎると拡大時の書き込みがぼやける（iPad 横向きで 3 倍のとき、実際の画素の約 4 割）。
+ */
+export const MAX_ZOOM = 3;
+
 /** 手書きキャンバスのタイル高さ（論理px）と重なり幅 */
 export const TILE_HEIGHT = 512;
 export const TILE_OVERLAP = 2;

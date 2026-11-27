@@ -59,7 +59,7 @@ manifest.webmanifest       ホーム画面に追加したときの設定
 assets/                    アイコン
 .github/workflows/deploy.yml  push → 検証 → GitHub Pages（アプリ＋公開デモ教材）
 core/                      共通システム（講義に依存しない）
-  app.js                   講義画面の起動・結線・キーボード・スワイプ・書き出し/読み込み
+  app.js                   講義画面の起動・結線・キーボード・スワイプ・ピンチ（拡大）・書き出し/読み込み
   pwa.js                   Service Worker の登録、アプリの更新（ユーザー操作でのみ切り替え）
   diag.js                  動作の記録（固まった時間・無視したタッチ・遅い処理・エラー。⋯ →「動作の記録」でコピー）
   config.js                定数（論理ページ幅、ツール既定値、保存設定）
@@ -383,7 +383,8 @@ const p = w.plot({ width, height, x:[xmin,xmax], y:[ymin,ymax], xlabel, ylabel, 
 
 ### 6.1 座標と表示
 - `#stage`（縦スクロール） > `.lw-sizer`（表示サイズ） > `.lw-page`（論理 1024 × H, `transform: scale(s)`）。
-- `s = min(画面幅/1024, 画面高/(1024×0.62))`。iPad は横幅基準。ページ高さ H = max(教材の高さ, 1 画面) + 拡張分、かつ書き込みの最下端を含む。
+- `s = fit × zoom`、`fit = min(画面幅/1024, 画面高/(1024×0.62))`。iPad は横幅基準。ページ高さ H = max(教材の高さ, 1 画面) + 拡張分、かつ書き込みの最下端を含む（「1 画面」は fit で決め、拡大しても変えない）。
+- 拡大（`zoom`、1〜`MAX_ZOOM`=3）は 2 本指のピンチ（`app.js` の `installPinch`）。ブラウザのピンチズームは使わない（ツールバーまで拡大され、キャンバスは引き伸ばされるだけ）ので、`user-scalable=no`・`#stage` の `touch-action: pan-y`・gesture イベントの `preventDefault` で止めたままにする。ピンチ中は `view.previewZoom`（`.lw-page` の transform だけ）、指を離したら `view.setZoom`（layout で描き直し、指の中点の下の論理座標が同じ画面位置に来るようスクロール）。拡大中は `#stage.lw-zoomed`（`overflow-x:auto; touch-action: pan-x pan-y`）で指 1 本で上下左右にスクロールし、スワイプのページ送りはしない。ページを切り替えると（`_show`）等倍に戻る。手書きのタイルは全幅なので解像度は `MAX_INK_RESOLUTION`（3）で頭打ち（上げるとタイルのメモリが増え、iPad のキャンバスの上限に当たる）。
 - 教材・テキスト層・3 枚の描画層（蛍光 `mix-blend-mode:multiply` → ペン → 入力中）を同じ `.lw-page` に重ねる。
 
 ### 6.2 手書き
@@ -393,6 +394,7 @@ const p = w.plot({ width, height, x:[xmin,xmax], y:[ymin,ymax], xlabel, ylabel, 
 - ページ送り：`view.turn(±1)`（`next/prev`）。設定 `pageTransition` が `slide` なら、今のページが横に抜けて次のページが反対側から滑り込む（150ms＋200ms。動きの最中は `view.turning` で書き込みを受け付けない。prefers-reduced-motion では即時）。スワイプはスライド時、指に合わせて `.lw-sizer` を `translateX` で動かし、十分に引っ張る（画面幅の 18% か 80px）か素早く払うと送る。
 - ページ送りのスワイプはグラフの上でも有効（`[data-ink=off]` の操作パネル・`lwWantsPointer` が真の点・動画等は除く）。ドラッグ点のあるグラフは `touch-action:none` にせず、点の上で始まった `touchstart` だけ `preventDefault`（グラフの上でもスクロールできるように）。
 - スワイプの pointermove/pointerup/pointercancel は **window** で受け取る（`installSwipe`）。iPad の Safari では、ステージの外の要素（授業モードのページ送りボタン・右上のボタン）の上で指を離すと pointerup がステージに届かないことがあり、「スワイプ中」の状態が残って以後のスワイプがすべて無視された（2026-11、授業モードの後にスワイプが効かなくなった）。新しい最初の指（`isPrimary`）が触れたとき・すべての指が離れたとき（touchend）にも残った状態を捨て、動作の記録（種類 swipe）に残す。指の状態を持つ処理は、終わりのイベントが届かない場合を必ず考える。
+- ピンチ（`installPinch`）：指の間隔が 16px 以上変わるまでは始めない（手を置いただけで少し拡大され、スワイプが効かなくなるのを防ぐ）。ペンで書いている最中・直後、接触が `PALM_RADIUS` より大きい指・パームとして無視した指・書いている指（指で書く ON）、操作パネル・入力欄・ボタン・動画・ドラッグ点の上、ページ送りの動きの最中は始めない。指を離したことが届かなくても、次の指が触れたときに確定する。拡大率は動作の記録（種類 zoom）に残る。
 - 縦スクロールとの取り合い：ページが 1 画面より少しでも高いと、iPad は横向きの指の動きでも縦スクロールを始め、スワイプが pointercancel で取り消される（スライダーのあるページで表示が上下に動いて送れなかった。2026-11）。指が 4px 動いた時点で向きを決め（`axisOf`：縦が横の 1.5 倍超なら縦）、横なら stage の touchmove（`passive:false`）を `preventDefault` して縦スクロールを始めさせない。それでも取られたら、スクロール中も届くタッチイベントで指を離した位置を見て、十分横ならページを送る。向きの判定は Pointer Events とタッチイベントで同じものを使う（別々に判定すると 45° 付近で食い違う）。
 - 描画：確定セグメントはタイル（高さ 512 の論理 px）へ追記、末尾の暫定セグメントだけ `LiveLayer` に描く（遅延ゼロで滑らか）。タイルは表示範囲 ± 0.5 画面だけ確保（長いページでもメモリ一定）。
 - `getCoalescedEvents()` があれば使う。点は 0.35 論理px 未満の間隔を間引き、座標は 0.1、筆圧は 0.01 に丸めて保存。
@@ -454,7 +456,7 @@ LibraryRecord = { id, path, current:版, source, versions:{ 版: { entry, downlo
 
 ### 6.7 改修時の確認
 - `python tools/build.py --check`：教材の検証（エラー 0 件）。
-- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 133**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込み・演習のカードとシート（Julia なし：閲覧のみ・貼り付けの制限・保存）を検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
+- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 145**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・ピンチでの拡大・PDF 出力・保存/復元・バックアップ・PDF 取り込み・演習のカードとシート（Julia なし：閲覧のみ・貼り付けの制限・保存）を検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
 - `http://localhost:8000/tests/offline.html` が **PASS 39**（Service Worker の「テスト用オフライン」で、ダウンロード → ネットワークなしでライブラリ・講義・数式フォント・画像・PDF・ウィジェット・書き込み・値と閲覧位置の復元・動画の Range、教材の更新と旧版保持・失敗時の保持・旧版削除、バックアップと復元、ファイル消失時の扱いを検証）。
 - `pip install websocket-client` の上で `python tests/e2e_prod.py` が **ALL PASSED 27/27**（本番ビルドを `/repo/` 以下で配信 → ダウンロード → サーバを止めて動作 → アプリの新版を配信しても押すまで切り替わらない（完全に閉じて起動し直しても）→ 更新後も書き込み・教材が残る。続けて：教材なしのアプリ（--app-only）を配信し、教材は GitHub API の模擬サーバ（別オリジン・トークン必須・CORS）から取得、設定の案内・トークン誤り・ダウンロードして開く・未ダウンロードは開けない・バックアップにトークンなし・停止後も動作）。sw.js・pwa.js・ライブラリ・配信元を触ったら必ず実行。
 - `python tests/e2e_exercise.py` が **21/21**（PC に Julia が必要。開発サーバ＋実行ツール＋Chrome で、期待値づくりのツールとビルドの検証、実行ツールの zip、ライブラリでのペアリング、実行・停止・採点・カードの表示と保存、教材の環境と warmup、本物のクリップボードでの貼り付けの制限、iPad は閲覧のみ、許可していない Origin・合言葉の誤り）。`core/exercise/`・`runner/`・`tools/exercise.py` を触ったら必ず実行。演習の問題を変えたら `python tools/exercise.py` も。
