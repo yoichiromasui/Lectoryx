@@ -162,7 +162,15 @@ export class PageView extends Emitter {
     el.style.opacity = '0';
     setTimeout(() => {
       el.style.transition = 'none';
-      this.show(to);
+      try {
+        this.show(to);
+      } catch (err) {
+        // 表示に失敗しても「切り替え中」のまま固まらない（書き込み・スワイプ・ボタンがすべて止まるため）
+        el.style.transform = '';
+        el.style.opacity = '';
+        this._turning = false;
+        throw err;   // エラーは動作の記録に残る
+      }
       el.style.transform = `translateX(${-dir * W * 0.5}px)`;
       void el.offsetWidth;   // いったん反対側に置いてから滑り込ませる
       el.style.transition = 'transform 200ms ease-out, opacity 200ms ease-out';

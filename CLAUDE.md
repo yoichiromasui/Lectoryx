@@ -330,6 +330,7 @@ const p = w.plot({ width, height, x:[xmin,xmax], y:[ymin,ymax], xlabel, ylabel, 
 - ペン先のダブルタップ（`DOUBLE_TAP`：1 回 250ms 以内・ずれ 4px 以内、間隔 350ms 以内・距離 9px 以内）でペン/蛍光ペン⇔消しゴム（`InkController._tapEnd`）。2 回のタップで付いた点・消えた線は `view.revertOps` で取り消し（やり直し履歴も元に戻す）。設定 `penDoubleTap`。Apple Pencil 本体のダブルタップ（UIPencilInteraction）は Web には届かないので使えない。
 - ページ送り：`view.turn(±1)`（`next/prev`）。設定 `pageTransition` が `slide` なら、今のページが横に抜けて次のページが反対側から滑り込む（150ms＋200ms。動きの最中は `view.turning` で書き込みを受け付けない。prefers-reduced-motion では即時）。スワイプはスライド時、指に合わせて `.lw-sizer` を `translateX` で動かし、十分に引っ張る（画面幅の 18% か 80px）か素早く払うと送る。
 - ページ送りのスワイプはグラフの上でも有効（`[data-ink=off]` の操作パネル・`lwWantsPointer` が真の点・動画等は除く）。ドラッグ点のあるグラフは `touch-action:none` にせず、点の上で始まった `touchstart` だけ `preventDefault`（グラフの上でもスクロールできるように）。
+- スワイプの pointermove/pointerup/pointercancel は **window** で受け取る（`installSwipe`）。iPad の Safari では、ステージの外の要素（授業モードのページ送りボタン・右上のボタン）の上で指を離すと pointerup がステージに届かないことがあり、「スワイプ中」の状態が残って以後のスワイプがすべて無視された（2026-11、授業モードの後にスワイプが効かなくなった）。新しい最初の指（`isPrimary`）が触れたとき・すべての指が離れたとき（touchend）にも残った状態を捨て、動作の記録（種類 swipe）に残す。指の状態を持つ処理は、終わりのイベントが届かない場合を必ず考える。
 - 描画：確定セグメントはタイル（高さ 512 の論理 px）へ追記、末尾の暫定セグメントだけ `LiveLayer` に描く（遅延ゼロで滑らか）。タイルは表示範囲 ± 0.5 画面だけ確保（長いページでもメモリ一定）。
 - `getCoalescedEvents()` があれば使う。点は 0.35 論理px 未満の間隔を間引き、座標は 0.1、筆圧は 0.01 に丸めて保存。
 - Undo/Redo はページ単位。操作は「削除したストローク（元位置）と追加したストローク（新位置）」の差分で、全消去・部分消去・拡張も同じ仕組み。
@@ -390,7 +391,7 @@ LibraryRecord = { id, path, current:版, source, versions:{ 版: { entry, downlo
 
 ### 6.7 改修時の確認
 - `python tools/build.py --check`：教材の検証（エラー 0 件）。
-- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 111**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
+- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 114**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
 - `http://localhost:8000/tests/offline.html` が **PASS 39**（Service Worker の「テスト用オフライン」で、ダウンロード → ネットワークなしでライブラリ・講義・数式フォント・画像・PDF・ウィジェット・書き込み・値と閲覧位置の復元・動画の Range、教材の更新と旧版保持・失敗時の保持・旧版削除、バックアップと復元、ファイル消失時の扱いを検証）。
 - `pip install websocket-client` の上で `python tests/e2e_prod.py` が **ALL PASSED 27/27**（本番ビルドを `/repo/` 以下で配信 → ダウンロード → サーバを止めて動作 → アプリの新版を配信しても押すまで切り替わらない（完全に閉じて起動し直しても）→ 更新後も書き込み・教材が残る。続けて：教材なしのアプリ（--app-only）を配信し、教材は GitHub API の模擬サーバ（別オリジン・トークン必須・CORS）から取得、設定の案内・トークン誤り・ダウンロードして開く・未ダウンロードは開けない・バックアップにトークンなし・停止後も動作）。sw.js・pwa.js・ライブラリ・配信元を触ったら必ず実行。
 - 実際の GitHub API について確認済み（2026-11）：ブラウザから `Authorization` 付きで CORS が通る、`application/vnd.github.raw+json` で本体が返る（`Content-Type` も同じ独自形式）、`git/ref/heads/<branch>` で SHA が取れる。

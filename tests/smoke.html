@@ -391,6 +391,30 @@ async function run() {
     tap();
     await sleep(450);
     check('ページ送りボタン：短いタップで前のページ', v.index === 1);
+    // iPad の Safari では、ステージの外（ページ送りボタンなど）の上で指を離すと pointerup がステージに届かないことがある
+    {
+      const id = nextId++;
+      const o = (x, buttons) => ({ bubbles: true, cancelable: true, pointerId: id, pointerType: 'touch', isPrimary: true, clientX: sr.left + x, clientY: sr.top + 400, buttons });
+      v.stage.dispatchEvent(new win.PointerEvent('pointerdown', o(900, 1)));
+      v.stage.dispatchEvent(new win.PointerEvent('pointermove', o(700, 1)));
+      prevB.dispatchEvent(new win.PointerEvent('pointermove', o(400, 1)));
+      prevB.dispatchEvent(new win.PointerEvent('pointerup', o(400, 0)));
+    }
+    await sleep(450);
+    check('スワイプ：ステージの外（ボタンの上）で指を離しても送れる', v.index === 2, `index=${v.index}`);
+    // 指を離したことがまったく届かなくても、次のスワイプは効く（残った状態を捨てる）
+    v.stage.dispatchEvent(new win.PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: nextId++, pointerType: 'touch', isPrimary: true, clientX: sr.left + 500, clientY: sr.top + 400, buttons: 1 }));
+    up = drag([300, 500, 700, 700]);
+    up();
+    await sleep(450);
+    check('スワイプ：前の指の pointerup が届かなくても次のスワイプは効く', v.index === 1, `index=${v.index}`);
+    // すべての指が離れた（touchend）のに pointerup が届かないとき → 状態を捨てて記録する
+    v.stage.dispatchEvent(new win.PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: nextId++, pointerType: 'touch', isPrimary: true, clientX: sr.left + 500, clientY: sr.top + 400, buttons: 1 }));
+    const te = new win.Event('touchend', { bubbles: true });
+    Object.defineProperty(te, 'touches', { value: [] });
+    win.dispatchEvent(te);
+    await sleep(1200);   // 動作の記録は 1 秒後に保存される
+    check('スワイプ：すべての指が離れたら残った状態を捨てて記録する', /スワイプの状態を解除（すべての指が離れた）/.test(win.localStorage.getItem('lw.diag.v1') || ''));
     lw().settings.set('pageButtons', false);
     check('設定でページ送りボタンを隠せる', win.getComputedStyle(btns).display === 'none');
     lw().settings.set('pageButtons', true);

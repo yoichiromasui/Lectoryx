@@ -42,7 +42,7 @@ export function timed(type, label, limit, fn) {
 
 const LABEL = {
   stall: '固まった', palm: 'タッチ無視', page: 'ページ', pdf: 'PDF描画', save: '保存', widget: 'グラフ描画',
-  ink: '書き込み描画', error: 'エラー', state: '状態', start: '起動',
+  ink: '書き込み描画', error: 'エラー', state: '状態', start: '起動', swipe: 'スワイプ',
 };
 
 /** 表示・コピー用の文字列 */

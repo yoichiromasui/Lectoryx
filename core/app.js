@@ -315,19 +315,32 @@ function guardPalm(el, view) {
  *   すぐ（'instant'）：素早い横スワイプでぱっと切り替わる。
  * グラフ（ウィジェットの表示部）の上でもページを送れる。スライダーなどの操作パネル、グラフ上の
  * ドラッグできる点、動画・埋め込み・リンク・ボタンの上では無効（それぞれの操作を優先）。ペン使用直後も無効。
+ *
+ * 指の動き・指を離したことはウィンドウ全体で受け取る。iPad の Safari では、ステージの外の要素
+ * （授業モードの左下のページ送りボタン・右上のボタンなど）の上で指を離すと、pointerup がステージに
+ * 届かないことがある。届かないと「スワイプ中」の状態が残り、以後のスワイプをすべて 2 本目の指と
+ * みなして無視してしまう（授業モードの後にスワイプが効かなくなった。2026-11）。
+ * 念のため、新しい最初の指が触れたとき・すべての指が離れたときにも、残った状態を捨てる。
  */
 function installSwipe({ stage, view, settings }) {
   let st = null;
   const slide = () => settings.get('pageTransition') === 'slide' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const drop = (why) => {
+    if (!st) return;
+    st = null;
+    view.slideBack();
+    diag('swipe', `スワイプの状態を解除（${why}）`, 300);
+  };
   stage.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'touch') return;
+    if (st && e.isPrimary) drop('指を離したことが届かなかった');   // 最初の指＝ほかに触れている指はない
     if (st) { st.multi = true; view.slideBack(); return; }
     if (!settings.get('swipe') || !e.isPrimary || view.input.penGuard() || view.turning) return;
     if (e.target.closest?.('[data-ink="off"], iframe, video, audio, a, button, input, select, textarea, .lw-text-editor')) return;
     if (typeof e.target.lwWantsPointer === 'function' && e.target.lwWantsPointer(e)) return;
     st = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), multi: false, axis: null, dx: 0 };
   });
-  stage.addEventListener('pointermove', (e) => {
+  window.addEventListener('pointermove', (e) => {
     if (!st || e.pointerId !== st.id || st.multi || !slide() || view.turning) return;
     const dx = e.clientX - st.x;
     const dy = e.clientY - st.y;
@@ -340,7 +353,7 @@ function installSwipe({ stage, view, settings }) {
     st.dx = canGo ? dx : dx * 0.25;   // 最初・最後のページでは少しだけ動いて戻る
     view.slideTo(st.dx, false);
   });
-  stage.addEventListener('pointerup', (e) => {
+  window.addEventListener('pointerup', (e) => {
     if (!st || e.pointerId !== st.id) return;
     const s = st;
     st = null;
@@ -358,10 +371,19 @@ function installSwipe({ stage, view, settings }) {
     const ok = !s.multi && Math.abs(dx) > SWIPE.minDx && Math.abs(dy) < Math.abs(dx) * SWIPE.maxSlope &&
       dt < SWIPE.maxMs && !view.input.penGuard();
     if (ok) (dx < 0 ? view.next() : view.prev());
-  });
-  stage.addEventListener('pointercancel', (e) => {
+  }, true);
+  window.addEventListener('pointercancel', (e) => {
     if (st && e.pointerId === st.id) { st = null; view.slideBack(); }
-  });
+  }, true);
+  // pointerup も pointercancel も届かなかったとき：すべての指が離れたら状態を捨てる
+  // （pointerup は touchend より先に届くので、少し待ってから確かめる）
+  for (const type of ['touchend', 'touchcancel']) {
+    window.addEventListener(type, (e) => {
+      if (!st || e.touches.length) return;
+      const s = st;
+      setTimeout(() => { if (st === s) drop('すべての指が離れた'); }, 50);
+    }, true);
+  }
 }
 
 function exportInk(book, lecture) {
