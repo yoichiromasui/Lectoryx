@@ -1,0 +1,29 @@
+{
+ "format": "lectoryx-exercise",
+ "version": 1,
+ "id": "rk4-fill",
+ "title": "① RK4 の k3・k4 を書く",
+ "prompt": "$\\dot{x} = -x + \\cos t,\\ x(0) = 1$ を、刻み幅 $h = 0.1$ の 4 次のルンゲ・クッタ法で $t = 1$ まで解きます。\n$k_1, k_2$ と更新式は書いてあります。`←` の 2 行に $k_3, k_4$ を書きなさい。\n\n$$\nk_3 = f\\!\\left(x_k + \\tfrac{h}{2} k_2,\\ t_k + \\tfrac{h}{2}\\right), \\qquad k_4 = f(x_k + h k_3,\\ t_k + h)\n$$\n\n厳密解は $x(t) = \\tfrac{1}{2}(\\cos t + \\sin t) + \\tfrac{1}{2} e^{-t}$ です。誤差がどこまで小さくなるかを見ましょう。\n",
+ "template": "f(x, t) = -x + cos(t)\nh = 0.1\nx = 1.0                       # x(0)\nfor k in 0:9                  # t = 0 から 1 まで 10 ステップ\n    t = k * h\n    k1 = f(x, t)\n    k2 = f(x + h / 2 * k1, t + h / 2)\n    k3 = 0.0                  # ← k3 を書く\n    k4 = 0.0                  # ← k4 を書く\n    x = x + h / 6 * (k1 + 2k2 + 2k3 + k4)\nend\nexact = (cos(1) + sin(1)) / 2 + exp(-1) / 2\nprintln(\"RK4: \", x, \"   厳密解: \", exact, \"   誤差: \", abs(x - exact))\n",
+ "timeLimitMs": 5000,
+ "env": null,
+ "tests": [
+  {
+   "name": "t = 1 での x",
+   "kind": "value",
+   "code": "x\n",
+   "expected": {
+    "v": 0.8748261196745745,
+    "t": "num",
+    "jt": "Float64"
+   }
+  },
+  {
+   "name": "誤差が 1e-6 より小さい（4 次の精度）",
+   "kind": "assert",
+   "code": "abs(x - exact) < 1e-6\n"
+  }
+ ],
+ "source": "efd022ef11f755442dfc",
+ "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
+}

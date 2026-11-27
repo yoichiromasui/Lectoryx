@@ -1,0 +1,29 @@
+{
+ "format": "lectoryx-exercise",
+ "version": 1,
+ "id": "newton-step",
+ "title": "① ニュートン法の更新式を書く",
+ "prompt": "$\\sqrt{a}$ を求めるニュートン法の更新式\n$$\nx_{k+1} = x_k - \\frac{x_k^2 - a}{2x_k}\n$$\nを、`←` の行の右辺に書きなさい（ほかの行はそのままでよい）。まず一度そのまま実行して、$x$ が変わらないことを確かめてから書き換えましょう。\n",
+ "template": "a = 2.0          # √a を求める\nx = 1.0          # 初期値 x₀\nfor k in 1:5\n    x = x        # ← 右辺を、ニュートン法の更新式に書き換える\n    println(k, \": \", x)\nend\n",
+ "timeLimitMs": 3000,
+ "env": null,
+ "tests": [
+  {
+   "name": "5 回くり返した後の x",
+   "kind": "value",
+   "code": "x\n",
+   "expected": {
+    "v": 1.4142135623730951,
+    "t": "num",
+    "jt": "Float64"
+   }
+  },
+  {
+   "name": "x² が a にほぼ等しい",
+   "kind": "assert",
+   "code": "abs(x^2 - a) < 1e-12\n"
+  }
+ ],
+ "source": "c1b1b0b8278a2c0cf3d2",
+ "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
+}

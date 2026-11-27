@@ -2,126 +2,40 @@
  "format": "lectoryx-exercise",
  "version": 1,
  "id": "poles",
- "title": "2 次系の極",
- "prompt": "2 次系 $G(s) = \\dfrac{\\omega_n^2}{s^2 + 2\\zeta\\omega_n s + \\omega_n^2}$ の極（分母 $=0$ の根）を求める関数 `poles(ζ, ωn)` を作りなさい。\n戻り値は 2 つの極を **虚部の小さい順**（虚部が同じなら実部の小さい順）に並べた複素数のベクトルとします。\nヒント：判別式 `D` を `sqrt(complex(D))` で計算する。並べ替えは `sort(sort(p, by = real), by = imag)`（実部で並べてから虚部で並べる）。\n",
- "template": "# デモ：実行・採点をすぐ試せるように、答えを入れてあります（消して自分で書いてもかまいません）\nfunction poles(ζ, ωn)\n    b = 2ζ * ωn\n    D = complex(b^2 - 4ωn^2)\n    p = [(-b - sqrt(D)) / 2, (-b + sqrt(D)) / 2]\n    return sort(sort(p, by = real), by = imag)\nend\n\npoles(0.5, 1.0)\n",
+ "title": "2 次系の極を求める",
+ "prompt": "2 次系の特性方程式 $s^2 + 2\\zeta\\omega_n s + \\omega_n^2 = 0$ の解（極）を、解の公式で `p1`（$-\\sqrt{D}$ の方）と `p2`（$+\\sqrt{D}$ の方）に入れなさい（`←` の 2 行）。\n判別式 `D` は、負になっても計算できるように `complex(…)` で複素数にしてあります。\n最後の行は、解と係数の関係（積 $= \\omega_n^2$、和 $= -2\\zeta\\omega_n$）の確認です。$\\zeta$ を 0・1・2 に変えて、極がどう動くかも試しましょう。\n",
+ "template": "ζ = 0.5\nωn = 1.0\nb = 2ζ * ωn\nD = complex(b^2 - 4ωn^2)      # 判別式（複素数）\np1 = 0.0                      # ← -√D の方の極\np2 = 0.0                      # ← +√D の方の極\nprintln(\"p1 = \", p1, \",  p2 = \", p2)\nprintln(\"積 = \", p1 * p2, \",  和 = \", p1 + p2)\n",
  "timeLimitMs": 5000,
  "env": null,
  "tests": [
   {
-   "name": "ζ = 0.5, ωn = 1（振動的）",
+   "name": "p1（虚部が負の方）",
    "kind": "value",
-   "code": "poles(0.5, 1.0)\n",
+   "code": "p1\n",
    "expected": {
-    "shape": [
-     2
-    ],
-    "t": "array",
-    "data": [
-     {
-      "re": -0.5,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": -0.8660254037844386
-     },
-     {
-      "re": -0.5,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": 0.8660254037844386
-     }
-    ],
-    "jt": "Vector{ComplexF64}"
+    "re": -0.5,
+    "t": "complex",
+    "jt": "ComplexF64",
+    "im": -0.8660254037844386
    }
   },
   {
-   "name": "ζ = 0（持続振動）",
+   "name": "p2（虚部が正の方）",
    "kind": "value",
-   "code": "poles(0.0, 3.0)\n",
-   "atol": 1e-09,
+   "code": "p2\n",
    "expected": {
-    "shape": [
-     2
-    ],
-    "t": "array",
-    "data": [
-     {
-      "re": -0.0,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": -3.0
-     },
-     {
-      "re": 0.0,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": 3.0
-     }
-    ],
-    "jt": "Vector{ComplexF64}"
+    "re": -0.5,
+    "t": "complex",
+    "jt": "ComplexF64",
+    "im": 0.8660254037844386
    }
   },
   {
-   "name": "ζ = 2（過減衰：実数の極 2 つ）",
-   "kind": "value",
-   "code": "poles(2.0, 1.0)\n",
-   "atol": 1e-09,
-   "expected": {
-    "shape": [
-     2
-    ],
-    "t": "array",
-    "data": [
-     {
-      "re": -3.732050807568877,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": -0.0
-     },
-     {
-      "re": -0.2679491924311228,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": 0.0
-     }
-    ],
-    "jt": "Vector{ComplexF64}"
-   }
-  },
-  {
-   "name": "ζ = 1（重根）",
-   "kind": "value",
-   "code": "poles(1.0, 2.0)\n",
-   "rtol": 1e-06,
-   "atol": 1e-06,
-   "expected": {
-    "shape": [
-     2
-    ],
-    "t": "array",
-    "data": [
-     {
-      "re": -2.0,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": -0.0
-     },
-     {
-      "re": -2.0,
-      "t": "complex",
-      "jt": "ComplexF64",
-      "im": 0.0
-     }
-    ],
-    "jt": "Vector{ComplexF64}"
-   }
-  },
-  {
-   "name": "極の積は ωn²、和は −2ζωn",
+   "name": "解と係数の関係（積 = ωn²、和 = −2ζωn）",
    "kind": "assert",
-   "code": "p = poles(0.3, 5.0)\nprod(p) ≈ 25 && sum(p) ≈ -3.0\n"
+   "code": "p1 * p2 ≈ ωn^2 && p1 + p2 ≈ -2ζ * ωn\n"
   }
  ],
- "source": "74fb301f3bac5713a9ff",
+ "source": "c2bbb5fd22868bd68d55",
  "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
 }

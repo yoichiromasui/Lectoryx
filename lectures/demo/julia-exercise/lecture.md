@@ -13,8 +13,8 @@ order: 3
 ## PC の Julia で実行・採点する
 
 ::: box 使い方
-カードの「開く」で問題・エディタ・採点の画面になります。実行・採点には、PC で **Lectoryx ローカル実行ツール** を起動します（画面の「PC の Julia との接続」）。
-iPad では問題とコードを見るだけです。
+カードの「開く」で問題・エディタ・採点の画面になります。ひな形はそのまま実行でき、`←` の行だけを書き換える **穴埋め** です。
+実行・採点には、PC で **Lectoryx ローカル実行ツール** を起動します（画面の「PC の Julia との接続」）。iPad では問題とコードを見るだけです。
 :::
 
 ---
@@ -29,9 +29,11 @@ $$
 x_{k+1} = x_k - \frac{f(x_k)}{f'(x_k)} = x_k - \frac{x_k^2 - a}{2x_k}
 $$
 
-@exercise newton
+@exercise newton-step
 
-@space 200
+@exercise newton-stop
+
+@space 120
 
 ---
 
@@ -41,9 +43,11 @@ $$
 
 ソルバーのパッケージを使わず、自分で書いて確かめる。刻み幅 $h$ を半分にすると、誤差は約 $1/16$ になる（4 次の精度）。
 
-@exercise rk4
+@exercise rk4-fill
 
-@space 220
+@exercise rk4-order
+
+@space 160
 
 ---
 

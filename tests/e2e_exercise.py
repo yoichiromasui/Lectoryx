@@ -97,7 +97,7 @@ def main():
     r = subprocess.run([sys.executable, str(ROOT / 'tools' / 'exercise.py'), str(ROOT / 'lectures' / LEC), '--home', str(home)],
                        capture_output=True, text=True, encoding='utf-8', errors='replace')
     check('tools/exercise.py：テスト用の演習の期待値は最新', r.returncode == 0 and r.stdout.count('最新') == 2, r.stdout.strip()[-200:])
-    md = ROOT / 'lectures' / 'demo' / 'julia-exercise' / 'exercises' / 'newton.md'
+    md = ROOT / 'lectures' / 'demo' / 'julia-exercise' / 'exercises' / 'newton-step.md'
     orig = md.read_bytes()
     try:
         md.write_bytes(orig + b'\n')

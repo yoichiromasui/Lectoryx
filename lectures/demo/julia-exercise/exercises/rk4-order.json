@@ -1,0 +1,54 @@
+{
+ "format": "lectoryx-exercise",
+ "version": 1,
+ "id": "rk4-order",
+ "title": "② 刻み幅を変えて精度を調べる",
+ "prompt": "①の計算を関数 `rk4_at1(h)`（刻み幅 $h$ で $t = 1$ まで解いて $x(1)$ を返す）にしてあります。\n$h = 0.1,\\ 0.05,\\ 0.025$ のそれぞれで誤差 $|x(1) - x_{\\text{厳密}}|$ を計算し、配列 `errs` に `push!` しなさい（`←` の行）。\n4 次の精度なら、$h$ を半分にすると誤差は約 $1/16$ になるはずです。表示される「比」を確かめましょう。\n",
+ "template": "f(x, t) = -x + cos(t)\nexact = (cos(1) + sin(1)) / 2 + exp(-1) / 2\n\nfunction rk4_at1(h)\n    x = 1.0\n    for k in 0:round(Int, 1 / h) - 1\n        t = k * h\n        k1 = f(x, t)\n        k2 = f(x + h / 2 * k1, t + h / 2)\n        k3 = f(x + h / 2 * k2, t + h / 2)\n        k4 = f(x + h * k3, t + h)\n        x = x + h / 6 * (k1 + 2k2 + 2k3 + k4)\n    end\n    return x\nend\n\nerrs = Float64[]\nfor h in [0.1, 0.05, 0.025]\n    # ← h ごとの誤差 abs(rk4_at1(h) - exact) を errs に push! する\nend\nprintln(\"誤差: \", errs)\nprintln(\"比:   \", errs[1:end-1] ./ errs[2:end])\n",
+ "timeLimitMs": 5000,
+ "env": null,
+ "tests": [
+  {
+   "name": "誤差が 3 つ入っている",
+   "kind": "assert",
+   "code": "length(errs) == 3\n"
+  },
+  {
+   "name": "誤差の値",
+   "kind": "value",
+   "code": "errs\n",
+   "rtol": 1e-06,
+   "expected": {
+    "shape": [
+     3
+    ],
+    "t": "array",
+    "data": [
+     {
+      "v": 2.462491648369536e-07,
+      "t": "num",
+      "jt": "Float64"
+     },
+     {
+      "v": 1.5164803413014738e-08,
+      "t": "num",
+      "jt": "Float64"
+     },
+     {
+      "v": 9.405268786011334e-10,
+      "t": "num",
+      "jt": "Float64"
+     }
+    ],
+    "jt": "Vector{Float64}"
+   }
+  },
+  {
+   "name": "h を半分にすると誤差が約 1/16（比が 14〜18）",
+   "kind": "assert",
+   "code": "length(errs) == 3 && all(14 .< errs[1:end-1] ./ errs[2:end] .< 18)\n"
+  }
+ ],
+ "source": "e2bf789f9e262602f047",
+ "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
+}
