@@ -3,6 +3,7 @@
 **Lectoryx — Beyond static lectures.**（Lecture × Laboratory × Experience）
 iPad + Apple Pencil で使う、大学・高専の数理系授業向けの講義アプリ（PWA）。
 教材（Markdown + LaTeX + JS ウィジェット）の提示、手書きの書き込み、数値実験を 1 つの画面で行う。
+プログラミング演習（Julia）は、学生の PC（Mac・Windows）の公式 Julia を **Lectoryx ローカル実行ツール**（`runner/`）で使って実行・採点する（4.9・6.8）。
 運用：Mac/PC の Claude Code で教材を作る → GitHub に push → GitHub Actions が検証して配信
 → iPad のホーム画面アプリ（教材ライブラリ）でダウンロード → **教室では iPad だけ（ネットワーク不要）** で授業。
 
@@ -43,7 +44,8 @@ iPad + Apple Pencil で使う、大学・高専の数理系授業向けの講義
 - 教材の基本フォントサイズ（24px）や余白（`content.css`）を変えると既存講義の書き込みが全部ずれる。変える場合は講義ごとのクラス（`@page class=...`）で上書きする。
 - **講義 ID を変えない。** 書き込みのキーは「講義 ID ＋ページ ID」。講義 ID はフロントマターの `id:`、なければ教材ルートからのフォルダパス（`control/01-first-order-lag`）。使用済みの講義のフォルダを移動・改名するときは、フロントマターに `id: 元のパス` を書く。
 - ウィジェットの操作部品（slider/number/checkbox/select）とドラッグ点の値は「ページ内のウィジェット番号:名前」と **作成順** で保存・復元される。使用済みの widgets.js で部品の順序を入れ替えない（追加は末尾に）。
-- 互換性を保つもの（変えるなら移行処理と版の管理を書く）：IndexedDB `lecture-web` のストア名とキー、`PageRecord` の形式、Cache Storage の名前（`lw-app-<版>`, `lw-lec-<版>`, `lw-meta`）、端末内の教材 URL `offline/<版>/<パス>`、`sw.js` とページのメッセージ（`status`, `skip-waiting`, `use-latest`）、`catalog.json` の形式。
+- 演習の ID（`@exercise <id>` と `exercises/<id>.md` の `id:`）を変えない。書いたコードと採点の結果は「講義 ID ＋ページ ID ＋演習 ID」で保存される。
+- 互換性を保つもの（変えるなら移行処理と版の管理を書く）：IndexedDB `lecture-web` のストア名とキー、`PageRecord` の形式（`exercises` を含む）、演習の JSON（`format: lectoryx-exercise`, `version: 1`）、実行ツールとページの通信（`PROTOCOL`、値の共通形式 `core/exercise/value.js` ⇔ `runner/pkgs/LectoryxWorker/src/JLValue.jl`）、ペアリングの保存先（localStorage `lectoryx.runner`）、Cache Storage の名前（`lw-app-<版>`, `lw-lec-<版>`, `lw-meta`）、端末内の教材 URL `offline/<版>/<パス>`、`sw.js` とページのメッセージ（`status`, `skip-waiting`, `use-latest`）、`catalog.json` の形式。
 
 ---
 
@@ -70,6 +72,12 @@ core/                      共通システム（講義に依存しない）
   content/lecture.js       講義の読み込み（lecture.md / widgets.js / @pdf の展開）
   content/pdf.js           PDF 教材（PDF.js の遅延読み込み・ページ描画・見出し抽出）
   content/source.js        教材の配信元（教材ルート）と端末内の教材 URL
+  exercise/card.js         演習のカード（@exercise。大きさ固定）と貼り付けの指定の解決
+  exercise/sheet.js        演習のシート（問題文・エディタ・実行・採点・出力・接続の案内。カードの「開く」で読み込む）
+  exercise/editor.js       エディタの動作（Tab、\alpha→α、⌘Enter、貼り付けの制限）
+  exercise/native.js       実行エンジン：PC の Julia（WebSocket・ペアリング・環境・実行・採点・停止）
+  exercise/grader.js       採点（エンジンから独立）。exercise/value.js：値の共通形式と許容誤差つきの比較
+  exercise/latex-symbols.json  \alpha → α の表（Julia の REPL の表）
   library/main.js          教材ライブラリの画面（index.html）
   library/download.js      教材一覧の取得、ダウンロード・検証・版の管理・削除（6.6）
   library/backup.js        バックアップ（教材＋書き込み .zip／書き込み .json）と復元
@@ -97,26 +105,39 @@ core/                      共通システム（講義に依存しない）
   styles/app.css           講義画面の UI のスタイル
   styles/content.css       教材本文・ウィジェットのスタイル
   styles/library.css       ライブラリ画面のスタイル
+  styles/exercise.css      演習のシートのスタイル（カードは content.css）
 vendor/                    KaTeX 0.19.1（min.js/css/woff2）, marked 18.1.3（ESM）,
                            PDF.js 6.5.438 legacy build（pdf.min.mjs, worker, cmaps, standard_fonts, wasm, iccs）
+runner/                    Lectoryx ローカル実行ツール（学生の PC の Julia。標準ライブラリだけ。公開時は runner/lectoryx-runner.zip で配布）
+  lectoryx-runner.jl       待ち受け（127.0.0.1）・認証・教材の環境・待機中の Julia・実行・採点・一括実行（--batch）
+  pkgs/LectoryxWorker/     使い捨ての Julia（評価・出力の取り込み・値の変換・ウォームアップ。事前コンパイルされる）
+  start-windows.cmd, start-mac.command, README.md   起動用・学生向けの説明
 lectures/                  公開デモ・テスト用の教材ルート（GitHub Pages で公開される。catalog.json は生成物）
   site.json                ライブラリのタイトル・副題・科目の並び順（"demo": true でデモの案内を表示）
   _template/               新しい講義のひな形
   _test/, _test_pdf/       自動テスト用（編集しない。_ で始まるフォルダは一覧・公開の対象外）
   demo/first-order-lag/    デモ（数式・ウィジェット・アニメーション。tests/offline.html が使う）
   demo/pdf-slides/         PDF 取り込みのデモ（slides.pdf + Markdown ページ）
+  demo/julia-exercise/     Julia 演習のデモ（ニュートン法・RK4・2 次系の極）
+  _test_exercise/          演習の自動テスト用（教材の環境 _julia/linalg を含む）
 courses/                   授業の教材ルート（別の非公開リポジトリ。Lectoryx には含めない）
   site.json, README.md, CLAUDE.md, .github/workflows/publish.yml
+                           （site.json の "includeDemo": true で、lectures/ の公開デモも一緒に配信する：教員の確認用）
   <科目>/_lib/*.js         科目で共通の計算（widgets.js から相対 import。依存として自動で配信される）
+  <科目>/_julia/<環境>/     演習の教材の環境（Project.toml・Manifest.toml・warmup.jl）
   <科目>/<NN-内容>/
     lecture.md             本文
     widgets.js             インタラクティブ部品（任意）
     media/                 画像・動画（中身はすべて配信される）
+    exercises/<id>.md      演習（Julia）の問題・模範解答・テスト（配信しない）
+    exercises/<id>.json    tools/exercise.py が作る問題・テスト・期待値（配信する。模範解答は入らない）
 tests/smoke.html           回帰テスト（合成入力で手書き・保存などを検証）
 tests/offline.html         オフライン動作のテスト（ダウンロード → ネットワークなしで全機能・更新・バックアップ）
 tests/e2e_prod.py          本番ビルドの総合テスト（サブディレクトリ配信・サーバ停止・アプリ更新・非公開リポジトリ構成）
+tests/e2e_exercise.py      演習の総合テスト（実行ツール・PC の Julia・Chrome。ペアリング・実行・停止・採点・環境・貼り付け・iPad）
 tests/screens.html         見た目確認用（サイズ・UI 状態を指定して開く）
 tools/build.py             教材の検証・教材一覧（catalog.json）の生成・公開フォルダ（_site）／教材フォルダ（_content）の作成
+tools/exercise.py          演習の期待値づくりと点検（exercises/<id>.md → .json。PC の公式 Julia で実行ツールの --batch を使う）
 tools/push_dir.sh          フォルダをブランチに 1 コミットで push（CI 用。改行変換なし）
 tools/serve.py             開発用サーバ（catalog.json と sw.js をその場で生成。courses/ を lectures/ と合わせて /lectures/ に見せる。no-cache）
 ```
@@ -127,6 +148,7 @@ tools/serve.py             開発用サーバ（catalog.json と sw.js をその
 
 1. `lectures/_template/` を **`courses/<科目>/<NN-内容>/`** にコピー（例: `courses/control/02-second-order/`）。フォルダ名は英数字・`-`・`_`（`courses/` からのパスが講義 ID になる）。
 2. `lecture.md` を書く（下記の書式）。フロントマターの `title`・`course`・`lecture`・`date` がライブラリの表示・分類に使われる。インタラクティブ部品が要るなら `widgets.js` に関数を書く。
+   演習（Julia）を入れるなら `exercises/<id>.md` を書き、`python tools/exercise.py --content-dir courses courses/<科目>/<NN-内容>` で期待値を作る（4.9。PC に Julia が必要。演習を直したら毎回）。
 3. **教材一覧への登録は不要**（`lecture.md` があるフォルダは自動で一覧に載る。公開したくないものは `draft: true`）。
 4. `python tools/build.py --check --content-dir courses` で検証する（ページ ID の欠落・重複、存在しないファイル・ウィジェット、外部 URL の import などをエラーにする。エラーがあると配信されない）。デモ教材（`lectures/`）は `python tools/build.py --check`。
 5. `python tools/serve.py` で起動し、`http://localhost:8000/lecture.html?l=control/02-second-order` で確認。
@@ -221,6 +243,7 @@ widgets: widgets.js           # 省略時 widgets.js（false で読み込まな�
 | `@video path width=640 height=360 [loop] [muted] [autoplay] poster=...` | 動画（playsinline 付き） |
 | `@iframe url width=... height=...` | 埋め込み（iframe 上ではペンで書けない） |
 | `@pdf file.pdf pages=1-8 id=s` | **PDF の各ページを講義のページとして展開**（4.7）。この行だけのページにする |
+| `@exercise id [paste=on\|off] [height=88]` | Julia 演習のカード（4.9。高さ固定。問題・エディタはカードの「開く」で重ねて表示） |
 
 ### 4.7 既存の PDF 資料（`@pdf`）
 - `---` で区切ったページに `@pdf slides.pdf pages=範囲 id=接頭辞` だけを書く。PDF の各ページが 1 ページずつ講義のページになる（前後に Markdown のページを自由に挟める）。
@@ -237,6 +260,39 @@ widgets: widgets.js           # 省略時 widgets.js（false で読み込まな�
 - それ以外（参照していない下書き・元の PowerPoint など）は **公開されない**（検証で「配信されないファイル」として表示）。隠しファイル・認証情報らしいファイルは配信しない。
 - 外部 URL（`https://...`）の import・画像はオフラインで動かないので使わない（import はエラー）。`@iframe` の外部ページはオンライン時のみ。
 - 1 ファイル 95MB まで（GitHub の制限）。動画は 30MB 程度までに圧縮する（ダウンロード時間・iPad の容量）。
+
+### 4.9 演習（Julia。`@exercise`）
+学生が PC（Mac・Windows）の **公式 Julia** でコードを書いて実行・自動採点する演習。ページには大きさ固定のカードだけを置き（`@exercise <id>`）、問題文・エディタ・出力・採点はカードの「開く」でページの上に重ねて開く（書き込みとずれない）。iPad・Julia のない端末では問題とコードを見るだけ。
+
+**ファイル**
+- `<講義>/exercises/<id>.md`：問題（下の書式）。模範解答・別解・誤答を含むので **配信しない**。
+- `<講義>/exercises/<id>.json`：`python tools/exercise.py` が作る（問題文・ひな形・テスト・期待値。模範解答は入らない）。これを配信する。**演習を直したら必ず作り直す**（古いと `tools/build.py` がエラーにする）。
+- 教材の環境（パッケージを使う演習だけ）：`<科目>/_julia/<環境>/Project.toml`・`Manifest.toml`（版を固定）・`warmup.jl`（よく使う呼び出し。事前コンパイルして最初の実行を速くする。`using` は書かない）。演習の先頭に `env: <環境>`。**パッケージは最小限に**：制御は ControlSystemsBase（ControlSystems.jl 本体は約 1GB で、事前コンパイルにも失敗した）、数値解法（オイラー法・RK4 など）は自分で書く前提でパッケージを使わない。
+
+**書式**（Julia のコードは標準の Julia のまま。独自の構文・互換の関数は加えない）
+````markdown
+---
+id: newton              ← ファイル名と同じ。授業で使った後は変えない
+title: ニュートン法で平方根を求める
+timeLimit: 3            ← 1 回の実行の制限時間（秒）
+env: control            ← 教材の環境（任意）
+---
+問題文（Markdown・$数式$）
+
+```julia template          学生に最初に見せるコード
+```julia solution          模範解答（期待値はここから作る）
+```julia test name="√2" [kind=value|assert|output|error] [rtol=1e-8] [atol=1e-10] [type] [hidden]
+```julia alt name="…"      別解：すべてのテストに合格すべき（学生が書きそうな正しい書き方）
+```julia wrong name="…"    誤答：どれかのテストで不合格になるべき（テストが甘くないかの確認）
+````
+- テストは「学生のコード＋テストのコード」を実行して判定する。`value`：最後の値を期待値と比べる（許容誤差 `rtol` `atol`、`type` で型も比べる）／`assert`：true なら合格／`output`：表示した文字列／`error`：エラーになれば合格。`hidden`：学生に内容を見せない（ただし JSON には入るので、見ようと思えば見られる）。
+- 毎回まっさらな Julia で、REPL と同じソフトスコープで実行する。標準入力（`readline`）は使えない。
+- `python tools/exercise.py --content-dir courses courses/<科目>/<NN-内容>`：模範解答はすべて合格・別解もすべて合格・誤答はどれかで不合格、を公式 Julia で確かめてから JSON を書く（通らなければ書かない）。期待値の作り方は学生の採点と同じ（実行ツールの `--batch`）。
+
+**貼り付けの制限**（既定は **貼り付けできない**。下ほど優先。どれも 1 行で、期待値の作り直しは不要）
+- 講義ごと：`lecture.md` のフロントマター `paste: on`（その講義の演習すべてで貼り付けを許す）／`paste: off`
+- 演習ごと：`@exercise <id> paste=on`／`paste=off`
+- 止めるのは「ほかの場所からの貼り付け・ドロップ」だけ（エディタの中でのコピー・切り取り・移動はできる）。目的は自分で入力させることで、不正の防止ではない（開発者ツールなどで回避できる。成績の試験には使わない）。
 
 ---
 
@@ -392,15 +448,27 @@ LibraryRecord = { id, path, current:版, source, versions:{ 版: { entry, downlo
 
 ### 6.7 改修時の確認
 - `python tools/build.py --check`：教材の検証（エラー 0 件）。
-- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 117**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込みを検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
+- `python tools/serve.py` → `http://localhost:8000/tests/smoke.html` が **PASS 133**（ALL PASSED）になること（合成 Pointer イベントで手書き・消しゴム・Undo・パーム・指で書く・レーザー・テキスト・ページ移動・回転・PDF 出力・保存/復元・バックアップ・PDF 取り込み・演習のカードとシート（Julia なし：閲覧のみ・貼り付けの制限・保存）を検証）。ヘッドレス Chrome の `--virtual-time-budget` は rAF や PDF.js のワーカーが進まないので使わず、実時間で実行する。
 - `http://localhost:8000/tests/offline.html` が **PASS 39**（Service Worker の「テスト用オフライン」で、ダウンロード → ネットワークなしでライブラリ・講義・数式フォント・画像・PDF・ウィジェット・書き込み・値と閲覧位置の復元・動画の Range、教材の更新と旧版保持・失敗時の保持・旧版削除、バックアップと復元、ファイル消失時の扱いを検証）。
 - `pip install websocket-client` の上で `python tests/e2e_prod.py` が **ALL PASSED 27/27**（本番ビルドを `/repo/` 以下で配信 → ダウンロード → サーバを止めて動作 → アプリの新版を配信しても押すまで切り替わらない（完全に閉じて起動し直しても）→ 更新後も書き込み・教材が残る。続けて：教材なしのアプリ（--app-only）を配信し、教材は GitHub API の模擬サーバ（別オリジン・トークン必須・CORS）から取得、設定の案内・トークン誤り・ダウンロードして開く・未ダウンロードは開けない・バックアップにトークンなし・停止後も動作）。sw.js・pwa.js・ライブラリ・配信元を触ったら必ず実行。
+- `python tests/e2e_exercise.py` が **21/21**（PC に Julia が必要。開発サーバ＋実行ツール＋Chrome で、期待値づくりのツールとビルドの検証、実行ツールの zip、ライブラリでのペアリング、実行・停止・採点・カードの表示と保存、教材の環境と warmup、本物のクリップボードでの貼り付けの制限、iPad は閲覧のみ、許可していない Origin・合言葉の誤り）。`core/exercise/`・`runner/`・`tools/exercise.py` を触ったら必ず実行。演習の問題を変えたら `python tools/exercise.py` も。
 - 実際の GitHub API について確認済み（2026-11）：ブラウザから `Authorization` 付きで CORS が通る、`application/vnd.github.raw+json` で本体が返る（`Content-Type` も同じ独自形式）、`git/ref/heads/<branch>` で SHA が取れる。
 - 見た目は `tests/screens.html?l=...&p=6&w=820&h=1180&state=ink,menu` で確認（state: compact, menu, overview, eraser, hl, hand, laser, text, ink）。
 - PDF 出力の確認：`lecture.html?l=...&print=view` をヘッドレス Chrome で print-to-pdf（`preferCSSPageSize`）。出来た PDF を一時的な講義に `@pdf` で読み込ませると画面で確認できる。
 - iPad 実機でしか確認できないこと（Pencil の筆圧・追従、パーム、スクロールとの干渉、ホーム画面アプリ）は README の「実機チェックリスト」に従って確認を依頼する。
 - **電池の消費**（古い iPad で授業 1 コマもつこと）：常に動き続けるタイマー・`requestAnimationFrame` のループを作らない（表示中・操作中・再生中だけ動かし、終わったら止める。監視などのタイマーは 1 秒以上の間隔で、背面では止める）。`mix-blend-mode` などの合成は必要なときだけ（蛍光ペンの層は線があるページだけ表示）。キャンバスは表示範囲だけ確保する。
 - Safari の対応状況に注意：正規表現の後読み、`Array.prototype.findLast` 等の新しすぎる API は避ける。トップレベル await は使わない。
+
+### 6.8 演習（Julia）の仕組み（`core/exercise/`, `runner/`）
+- **実行は学生の PC の公式 Julia**。Lectoryx（PWA）は `ws://127.0.0.1:27182/lectoryx/ws` で Lectoryx ローカル実行ツール（`runner/lectoryx-runner.jl`。Julia の標準ライブラリだけ）につなぐ。学校のサーバは使わない。パッケージを入れた後はオフラインで動く。
+- **安全策**：127.0.0.1 だけで待ち受ける／Host ヘッダーを確かめる（DNS rebinding 対策）／WebSocket の Origin を許可リスト（配布用 zip の `lectoryx-runner.toml`。`tools/build.py` が公開先の URL から書く）と照合する／最初のメッセージで合言葉（192 ビット。`~/.lectoryx/token`）を時間一定で比べる。合言葉は実行ツールが開くペアリング用 URL（ライブラリ）の `#lectoryx=<port>.<token>`（サーバに送られない部分）で渡し、ライブラリが localStorage `lectoryx.runner` に保存してアドレスバーから消す。バックアップには入れない。学生のコードを実行するのは仕様（学生本人の権限。サンドボックスはない）。
+- **ブラウザ**：Chrome・Edge（・Firefox）は、公開サイトから 127.0.0.1 への接続に初回だけ許可が要る（Local Network Access）。**Safari は https のページから ws://127.0.0.1 を mixed content として遮断する**ので、シートで Chrome・Edge・Firefox を案内する（ローカル版は今後）。iPad・iPhone は接続を試みず閲覧のみ（`unsupported`）。
+- **実行**：毎回まっさらな Julia プロセスで、Main に REPL と同じソフトスコープで評価する（前の実行が残らない・型の表示が REPL と同じ・止めるときはプロセスを終わらせる）。起動の遅れは待機中の Julia（環境ごとに 2 つ、10 分使わなければ片付ける）で隠す。標準出力は少しずつ送る。制限時間・停止・エラーの行番号。値は共通形式（`value.js` ⇔ `JLValue.jl`）で返し、期待値との比較はブラウザ側（`grader.js`。学生のコードの影響を受けない）。
+- **教材の環境**：演習の JSON に Project.toml・Manifest.toml・warmup.jl の中身を入れて渡す。実行ツールは初回だけ `Pkg.instantiate`・事前コンパイルし（数分。画面に進み具合）、warmup.jl を小さなパッケージ LectoryxEnv にして事前コンパイルに含める（ControlSystemsBase の最初の `step` が 14.7 秒 → 0.2 秒）。学生の普段の環境（`@v1.x`）は見せない。
+- **エンジンから独立**：問題の書式・エディタ・採点・表示は `engine.run / runTests / ensureEnv / stop` だけを使う（将来のブラウザ内の実行〔SubsetJuliaVM。experiments/julia-wasm の検証〕も同じ形にする）。
+- **保存**：書いたコードと採点の結果は、カードのあるページの `PageRecord.exercises[id] = { code, passed, total, at }`（講義の書き出し・全体バックアップに入る。「書き込みのあるページ」には数えない）。
+- **シート**：`.lw-ex-sheet`（`body` 直下、`data-ink="off"`）。開いている間はキー操作を講義画面に渡さない（Esc で閉じる）。実行ツールが後から起動されたときのため、開いている間だけ 5 秒ごとに 2 分までつなぎ直す（フォーカスが戻ったときも）。
+- **配布**：`tools/build.py --out` が `runner/` を `runner/lectoryx-runner.zip`（設定入り。Mac の起動ファイルは実行可能、Windows は CRLF）にする。開発サーバは開発用の設定で同じ zip を返す。期待値は教員の PC で `tools/exercise.py` が作り（CI では Julia を使わない）、JSON の `source`（演習ファイルと環境のハッシュ）が今のファイルと合わなければビルドがエラーにする。
 
 ---
 
@@ -409,4 +477,6 @@ LibraryRecord = { id, path, current:版, source, versions:{ 版: { entry, downlo
 - **Phase 1（実装済み）**：講義画面、KaTeX、手書き（ペン・蛍光ペン・消しゴム 2 種・Undo/Redo・全消去）、筆圧、パームリジェクション、動的グラフ・ウィジェット、ページ送り・一覧・白紙ページ・板書スペース拡張、背景、ツールバー最小化。
   - 前倒し：IndexedDB への自動保存と復元、JSON バックアップ、レーザーポインタ、テキストの書き込み、PDF 出力、PDF 教材の取り込み（`@pdf`）。
 - **iPad 単独化（実装済み）**：PWA（ホーム画面・オフライン起動・明示的なアプリ更新）、GitHub Pages 配信と GitHub Actions、教材一覧の自動生成と検証、教材ライブラリ（科目・年度・最近使った・ダウンロード・版・削除）、旧版の保持、数値実験の値と閲覧位置の保存、全体バックアップ（.zip）と復元、保存容量の確認。
+- **プログラミング演習（実装済み）**：Julia 演習（`@exercise`）、学生の PC の公式 Julia で実行・採点（Lectoryx ローカル実行ツール）、期待値づくりと点検（tools/exercise.py）、貼り付けの制限。
+  - 今後：学生への教材の配り方（非公開の courses は教員の iPad 用。学生用の配信元が要る）、Safari 用のローカル版、実行ツールの Julia パッケージ化（OS の警告を避ける）、結果の提出、図（Plots）、Mac 実機での確認。
 - **今後**：描画性能の実機チューニング、書式の拡充（段階表示 `::: step` など）、高度な手書き（投げ縄選択・移動、図形補正、蛍光ペンのみ消す消しゴム）、PDF 出力の用紙サイズ選択、旧版との差分表示。

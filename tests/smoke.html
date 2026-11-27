@@ -26,6 +26,7 @@
 <script type="module">
 import { parseLecture, createRenderer, parseArgs } from '../core/content/markdown.js';
 import { textHtml } from '../core/ink/text.js';
+import { pasteAllowed } from '../core/exercise/card.js';
 
 const LECTURE = '_test';
 const log = document.getElementById('log');
@@ -631,6 +632,76 @@ async function run() {
   win.document.body.classList.remove('lw-printing');
   await lw().book.flush();
   await lw().store.clearLecture('_test_pdf');
+
+  // ---- 17. 演習（@exercise。PC の Julia なしで確かめられること：カード・シート・閲覧のみ・貼り付けの制限・保存） ----
+  check('貼り付けの指定（@exercise の paste= ＞ フロントマター ＞ 既定は禁止）',
+    pasteAllowed({ meta: {} }, undefined) === false && pasteAllowed({ meta: { paste: 'on' } }, undefined) === true &&
+    pasteAllowed({ meta: { paste: true } }, 'off') === false && pasteAllowed({ meta: { paste: false } }, 'on') === true);
+  win = await loadFrame('#1', '_test_exercise');
+  await lw().store.clearLecture('_test_exercise');
+  win.localStorage.removeItem('lectoryx.runner');               // PC の Julia とペアリングしていない
+  win = await loadFrame('#1', '_test_exercise');
+  let doc = win.document;
+  const cards = () => [...doc.querySelectorAll('.lw-exercise')];
+  const contentH = lw().view.contents.get('one').el.offsetHeight;
+  check('@exercise のカード（題名・未着手・高さ固定）', cards().length === 3 && cards()[0].textContent.includes('テスト用の演習') &&
+    cards()[0].textContent.includes('未着手') && cards()[0].offsetHeight === 88 && cards()[1].offsetHeight === 120, cards().map((c) => c.offsetHeight).join(','));
+  check('問題がない演習はカードに表示して開けない', cards()[1].textContent.includes('読み込めません') && cards()[1].querySelector('button').disabled);
+  const cardTop = cards()[0].offsetTop;
+  cards()[0].querySelector('.lw-ex-card-open').click();
+  for (let i = 0; i < 100 && !doc.querySelector('.lw-ex-sheet'); i++) await sleep(30);
+  let sheet = doc.querySelector('.lw-ex-sheet');
+  let ta = sheet?.querySelector('.lw-ex-code');
+  check('シートを開く（問題文の数式・ひな形）', !!sheet && !!sheet.querySelector('.lw-ex-prompt .katex') && ta.value.startsWith('function f(x)'));
+  const btnByText = (t) => [...sheet.querySelectorAll('button')].find((b) => b.textContent.includes(t));
+  check('PC の Julia がなければ閲覧のみ（実行・採点は無効、接続の案内）',
+    btnByText('実行').disabled && btnByText('採点').disabled && sheet.classList.contains('lw-ex-noengine') &&
+    sheet.querySelector('.lw-ex-conn').open &&
+    !!sheet.querySelector('.lw-ex-connbody a[href$="runner/lectoryx-runner.zip"]'));
+  const pasteEvent = (text) => {
+    const dt = new win.DataTransfer();
+    dt.setData('text/plain', text);
+    return new win.ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+  };
+  check('ほかの場所からの貼り付けを止めて理由を表示（既定）', !ta.dispatchEvent(pasteEvent('f(x) = 2x')) && !sheet.querySelector('.lw-ex-pastenote').hidden);
+  ta.focus();
+  ta.setSelectionRange(0, 8);
+  ta.dispatchEvent(new win.ClipboardEvent('copy', { bubbles: true, cancelable: true }));
+  check('エディタの中でコピーしたものは貼り付けられる', ta.dispatchEvent(pasteEvent('function')));
+  const drop = new win.DragEvent('drop', { dataTransfer: new win.DataTransfer(), bubbles: true, cancelable: true });
+  check('ほかの場所からのドロップも止める', !ta.dispatchEvent(drop));
+  const tool0 = lw().settings.get('tool');
+  btnByText('閉じる').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'e', bubbles: true }));
+  check('シートの中のキー操作は講義画面に渡さない（ツールが変わらない）', lw().settings.get('tool') === tool0);
+  ta.value = 'f(x) = 2x\n';
+  ta.dispatchEvent(new win.Event('input', { bubbles: true }));
+  ta.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  check('Esc で閉じてコードを保存（ページの state.exercises）', !doc.querySelector('.lw-ex-sheet') && lw().view.page.state.exercises.ex1?.code === 'f(x) = 2x\n');
+  check('カードの表示が「書きかけ」になり、ページのレイアウトは変わらない',
+    cards()[0].textContent.includes('書きかけ') && cards()[0].offsetTop === cardTop && lw().view.contents.get('one').el.offsetHeight === contentH);
+  const exported = lw().book.exportData();
+  check('講義の書き出しに演習のコードが入る', exported.pages.one?.exercises?.ex1?.code === 'f(x) = 2x\n');
+  await lw().book.flush();
+  win = await loadFrame('#1', '_test_exercise');
+  doc = win.document;
+  cards()[0].querySelector('.lw-ex-card-open').click();
+  for (let i = 0; i < 100 && !doc.querySelector('.lw-ex-sheet'); i++) await sleep(30);
+  sheet = doc.querySelector('.lw-ex-sheet');
+  check('開き直すと保存したコードに戻る', sheet?.querySelector('.lw-ex-code').value === 'f(x) = 2x\n');
+  btnByText('ひな形').click();
+  check('ひな形に戻す（確認なし・元に戻せる）', sheet.querySelector('.lw-ex-code').value.startsWith('function f(x)') && !!btnByText('元に戻す'));
+  btnByText('元に戻す').click();
+  check('元に戻す', sheet.querySelector('.lw-ex-code').value === 'f(x) = 2x\n');
+  btnByText('閉じる').click();
+  lw().view.show(1);
+  doc.querySelector('.lw-exercise .lw-ex-card-open').click();
+  for (let i = 0; i < 100 && !doc.querySelector('.lw-ex-sheet'); i++) await sleep(30);
+  sheet = doc.querySelector('.lw-ex-sheet');
+  check('paste=on の演習は貼り付けられる（ページごとに別のコード）', sheet.querySelector('.lw-ex-code').dispatchEvent(pasteEvent('x = 1')) &&
+    sheet.querySelector('.lw-ex-code').value.startsWith('function f(x)') && !sheet.textContent.includes('貼り付けはできません'));
+  btnByText('閉じる').click();
+  await lw().book.flush();
+  await lw().store.clearLecture('_test_exercise');
 }
 
 run().catch((e) => check('例外なく完了', false, e.stack || e.message)).finally(() => {

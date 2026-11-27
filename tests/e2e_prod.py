@@ -35,7 +35,7 @@ PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORK = tempfile.mkdtemp(prefix='lw-e2e-')
 SITE = os.path.join(WORK, 'site')
 REPO = os.path.join(SITE, 'repo')
-PORT = 8765
+PORT = int(os.environ.get('LW_E2E_PORT', '8765'))   # 使用中なら LW_E2E_PORT で変える
 BASE = f'http://localhost:{PORT}/repo/'
 CHROME = os.environ.get('CHROME') or next((p for p in [
     r'C:\Program Files\Google\Chrome\Application\chrome.exe',

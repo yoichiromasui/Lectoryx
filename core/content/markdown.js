@@ -289,6 +289,14 @@ export function createRenderer({ macros = {} } = {}) {
         delete opts._;
         return `<div class="lw-widget" data-widget="${attr(wname)}" data-opts="${attr(JSON.stringify(opts))}"></div>`;
       }
+      case 'exercise': {
+        // 演習のカード（大きさ固定。中身は core/exercise/card.js が入れる）。問題は exercises/<id>.json
+        const [ex] = a._;
+        if (!ex || !/^[A-Za-z0-9_-]+$/.test(ex)) return errorBox('@exercise には演習の ID（英数字と - _）が必要です');
+        const hgt = Math.max(64, Number(a.height) || 88);
+        const paste = a.paste != null ? ` data-paste="${attr(a.paste)}"` : '';
+        return `<div class="lw-exercise" data-exercise="${attr(ex)}"${paste} data-ink="off" style="height:${hgt}px"></div>`;
+      }
       case 'space': {
         const hgt = Number(a._[0]) || Number(a.height) || 200;
         const bg = a._.find((x) => ['grid', 'lines', 'dots', 'box'].includes(x)) || a.bg;

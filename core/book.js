@@ -5,7 +5,7 @@
 //     id,                         // 教材ページ: lecture.md 由来の ID / 白紙: 'blank-xxxx'
 //     kind: 'source' | 'blank',
 //     source,                     // 教材ページの {id, opts, title, html}
-//     state: { strokes, texts, widgets, extra, bg },  // 保存対象（widgets は数値実験の値）
+//     state: { strokes, texts, widgets, exercises, extra, bg },  // 保存対象（widgets は数値実験の値、exercises は演習のコードと採点の結果）
 //     history,                    // Undo/Redo（保存しない）
 //   }
 //
@@ -41,11 +41,12 @@ export class Book extends Emitter {
     const strokes = Array.isArray(rec?.strokes) ? rec.strokes.filter(validStroke) : [];
     const texts = Array.isArray(rec?.texts) ? rec.texts.filter(validText) : [];
     const widgets = validWidgets(rec?.widgets);
+    const exercises = validExercises(rec?.exercises);
     return {
       id,
       kind,
       source,
-      state: { strokes, texts, widgets, extra: Number(rec?.extra) || 0, bg: rec?.bg ?? bg },
+      state: { strokes, texts, widgets, exercises, extra: Number(rec?.extra) || 0, bg: rec?.bg ?? bg },
       history: new History(),
     };
   }
@@ -127,7 +128,7 @@ export class Book extends Emitter {
     const now = Date.now();
     const pages = {};
     for (const p of this.dirty) {
-      pages[p.id] = { strokes: p.state.strokes, texts: p.state.texts, widgets: p.state.widgets, extra: p.state.extra, bg: p.state.bg, updated: now };
+      pages[p.id] = { strokes: p.state.strokes, texts: p.state.texts, widgets: p.state.widgets, exercises: p.state.exercises, extra: p.state.extra, bg: p.state.bg, updated: now };
       this.saved[p.id] = pages[p.id];
     }
     const deleted = [...this.deleted];
@@ -163,7 +164,8 @@ export class Book extends Emitter {
     // 現在の教材にないページ（見出し変更などで ID が変わったもの）の書き込みも含める
     for (const [id, rec] of Object.entries(this.saved)) pages[id] = pickRecord(rec);
     for (const p of this.pages) {
-      if (p.state.strokes.length || p.state.texts.length || Object.keys(p.state.widgets).length || p.state.extra || p.state.bg || this.saved[p.id]) {
+      if (p.state.strokes.length || p.state.texts.length || Object.keys(p.state.widgets).length || Object.keys(p.state.exercises).length ||
+        p.state.extra || p.state.bg || this.saved[p.id]) {
         pages[p.id] = pickRecord(p.state);
       }
     }
@@ -210,7 +212,10 @@ export async function importInkData(store, lectureId, data, { lastPage } = {}) {
 }
 
 function pickRecord(r) {
-  return { strokes: r.strokes || [], texts: r.texts || [], widgets: validWidgets(r.widgets), extra: Number(r.extra) || 0, bg: r.bg ?? null };
+  return {
+    strokes: r.strokes || [], texts: r.texts || [], widgets: validWidgets(r.widgets), exercises: validExercises(r.exercises),
+    extra: Number(r.extra) || 0, bg: r.bg ?? null,
+  };
 }
 
 /** 数値実験の値 { "番号:名前": [値…] } */
@@ -218,6 +223,19 @@ function validWidgets(w) {
   if (!w || typeof w !== 'object' || Array.isArray(w)) return {};
   const out = {};
   for (const [k, v] of Object.entries(w)) if (Array.isArray(v)) out[k] = v;
+  return out;
+}
+
+/** 演習のコードと採点の結果 { "演習ID": { code, passed?, total?, at? } } */
+function validExercises(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(x)) {
+    if (!v || typeof v !== 'object' || typeof v.code !== 'string') continue;
+    const r = { code: v.code };
+    if (Number.isInteger(v.total) && Number.isInteger(v.passed)) Object.assign(r, { passed: v.passed, total: v.total, at: Number(v.at) || 0 });
+    out[k] = r;
+  }
   return out;
 }
 

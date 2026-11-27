@@ -1,0 +1,48 @@
+{
+ "format": "lectoryx-exercise",
+ "version": 1,
+ "id": "ex2",
+ "title": "教材の環境を使う演習",
+ "prompt": "行列 $A$ の固有値を小さい順に並べたベクトルを返す関数 `ev(A)` を作りなさい（教材の環境 linalg：LinearAlgebra）。\n",
+ "template": "using LinearAlgebra\nfunction ev(A)\n    # ここに書く\nend\n",
+ "timeLimitMs": 5000,
+ "env": {
+  "name": "linalg",
+  "project": "[deps]\nLinearAlgebra = \"37e2e46d-f89d-539d-b4ee-838fcccc9c8e\"\n",
+  "manifest": "# This file is machine-generated - editing it directly is not advised\n\njulia_version = \"1.12.7\"\nmanifest_format = \"2.0\"\nproject_hash = \"f352ceee806168c8ae38887a01d7bae6ca62470b\"\n\n[[deps.Artifacts]]\nuuid = \"56f22d72-fd6d-98f1-02f0-08ddc0907c33\"\nversion = \"1.11.0\"\n\n[[deps.CompilerSupportLibraries_jll]]\ndeps = [\"Artifacts\", \"Libdl\"]\nuuid = \"e66e0078-7015-5450-92f7-15fbd957f2ae\"\nversion = \"1.3.1+2\"\n\n[[deps.Libdl]]\nuuid = \"8f399da3-3557-5675-b5ff-fb832c97cbdb\"\nversion = \"1.11.0\"\n\n[[deps.LinearAlgebra]]\ndeps = [\"Libdl\", \"OpenBLAS_jll\", \"libblastrampoline_jll\"]\nuuid = \"37e2e46d-f89d-539d-b4ee-838fcccc9c8e\"\nversion = \"1.12.0\"\n\n[[deps.OpenBLAS_jll]]\ndeps = [\"Artifacts\", \"CompilerSupportLibraries_jll\", \"Libdl\"]\nuuid = \"4536629a-c528-5b80-bd46-f80d51c5b363\"\nversion = \"0.3.29+0\"\n\n[[deps.libblastrampoline_jll]]\ndeps = [\"Artifacts\", \"Libdl\"]\nuuid = \"8e850b90-86db-534c-a0d3-1478176c7d93\"\nversion = \"5.15.0+0\"\n",
+  "warmup": "# よく使う呼び出し（事前コンパイルしておく）\nA = [2.0 1.0; 1.0 2.0]\neigvals(A)\nexp(A)\n"
+ },
+ "tests": [
+  {
+   "name": "対称行列",
+   "kind": "value",
+   "code": "ev([2.0 1.0; 1.0 2.0])\n",
+   "expected": {
+    "shape": [
+     2
+    ],
+    "t": "array",
+    "data": [
+     {
+      "v": 1.0,
+      "t": "num",
+      "jt": "Float64"
+     },
+     {
+      "v": 3.0,
+      "t": "num",
+      "jt": "Float64"
+     }
+    ],
+    "jt": "Vector{Float64}"
+   }
+  },
+  {
+   "name": "上三角",
+   "kind": "assert",
+   "code": "ev([1.0 5.0; 0.0 -3.0]) ≈ [-3.0, 1.0]\n"
+  }
+ ],
+ "source": "e750b012b4416b2b6dcc",
+ "generatedBy": "Julia 1.12.7（Lectoryx ローカル実行ツール 0.2.0）"
+}

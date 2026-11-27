@@ -514,6 +514,7 @@ body.lw-compact.lw-pagebtns-on .lw-pagebtns { display: flex; }
   body.lw-printing #app,
   body.lw-printing .lw-toast,
   body.lw-printing .lw-overlay,
+  body.lw-printing .lw-ex-sheet,
   body.lw-printing .lw-fatal { display: none !important; }
   body.lw-printing #lw-print { display: block; }
   .lw-print-sheet {

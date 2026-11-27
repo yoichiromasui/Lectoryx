@@ -33,6 +33,9 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import exercise as exercise_tool  # noqa: E402  （同じフォルダの exercise.py：演習の形式とハッシュ）
+
 ROOT = Path(__file__).resolve().parent.parent
 CONTENT = 'lectures'                     # アプリと一緒に公開する教材（デモ・テスト用）。公開時は <アプリ>/lectures/
 COURSES = 'courses'                      # 実際の授業の教材（別の非公開リポジトリ。開発用サーバでは lectures/ と合わせて表示）
@@ -198,10 +201,10 @@ def split_pages(body: str):
 
 
 def parse_pages(body: str):
-    """[{opts, pdf, widgets:[name], lines:[(text, in_fence)]}]"""
+    """[{opts, pdf, widgets:[name], exercises:[id], lines:[(text, in_fence)]}]"""
     pages = []
     for chunk in split_pages(body):
-        opts, pdf, widgets, lines, fence = {}, None, [], [], None
+        opts, pdf, widgets, exercises, lines, fence = {}, None, [], [], [], None
         for line in chunk:
             f = FENCE_RE.match(line)
             if f:
@@ -218,11 +221,14 @@ def parse_pages(body: str):
                     m = re.match(r'@widget\s+(\S+)', line)
                     if m:
                         widgets.append(m.group(1))
+                    m = re.match(r'@exercise(?:\s+(\S+))?', line)
+                    if m:
+                        exercises.append(m.group(1) or '')
                 lines.append((line, bool(fence)))
         text = '\n'.join(t for t, _ in lines)
         if pdf is None and not text.strip() and not opts:
             continue
-        pages.append({'opts': opts, 'pdf': pdf, 'widgets': widgets, 'lines': lines})
+        pages.append({'opts': opts, 'pdf': pdf, 'widgets': widgets, 'exercises': exercises, 'lines': lines})
     return pages
 
 
@@ -339,6 +345,41 @@ def academic_year(date: str):
     return y if mo >= 4 else y - 1
 
 
+def check_exercise(folder: Path, ex_id: str, content_root: Path):
+    """@exercise <id> の検証。(エラー or None, 配信する exercises/<id>.json or None)"""
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', ex_id or ''):
+        return f'@exercise {ex_id}: 演習の ID（英数字と - _）が必要です', None
+    jf = folder / 'exercises' / f'{ex_id}.json'
+    md = folder / 'exercises' / f'{ex_id}.md'
+    try:
+        shown = folder.resolve().relative_to(ROOT).as_posix()
+        top = content_root.resolve().relative_to(ROOT).as_posix()
+        tool = f'python tools/exercise.py{"" if top == CONTENT else " --content-dir " + top} {shown}'
+    except ValueError:
+        tool = f'python tools/exercise.py --content-dir <教材のフォルダ> <講義のフォルダ>'
+    if not jf.is_file():
+        if md.is_file():
+            return f'@exercise {ex_id}: exercises/{ex_id}.json がありません（{tool} で作ります。PC に Julia が必要）', None
+        return f'@exercise {ex_id}: exercises/{ex_id}.md（演習の問題）がありません', None
+    try:
+        d = json.loads(jf.read_text(encoding='utf-8'))
+    except (ValueError, OSError) as e:
+        return f'exercises/{ex_id}.json を読めません（{e}）', None
+    if d.get('format') != exercise_tool.FORMAT or d.get('id') != ex_id or not isinstance(d.get('tests'), list):
+        return f'exercises/{ex_id}.json の形式が違います（{tool} で作り直してください）', None
+    if d.get('version', 0) > exercise_tool.VERSION:
+        return f'exercises/{ex_id}.json は新しい形式です（Lectoryx を更新してください）', None
+    if md.is_file():
+        try:
+            h = exercise_tool.source_hash(md, content_root)
+        except exercise_tool.ExerciseError as e:
+            return f'exercises/{ex_id}.md: {e}', jf
+        if d.get('source') != h:
+            return (f'@exercise {ex_id}: 演習（exercises/{ex_id}.md か教材の環境）が変わったのに期待値が古いままです'
+                    f'（{tool} を実行してから push してください）'), jf
+    return None, jf
+
+
 def scan_lecture(folder: Path, content_root: Path):
     path = rel(folder, content_root)
     errors, warnings, info = [], [], []
@@ -402,6 +443,13 @@ def scan_lecture(folder: Path, content_root: Path):
                 if w not in exports:
                     errors.append(f'@widget {w}: widgets.js に export function {w}(w) がありません')
 
+    for ex_id in sorted(set(x for p in pages for x in p['exercises'])):
+        err, jf = check_exercise(folder, ex_id, content_root)
+        if err:
+            errors.append(err)
+        if jf:
+            files.add(jf)
+
     for kind, u in md_refs(pages):
         p = (folder / u).resolve()
         try:
@@ -442,7 +490,9 @@ def scan_lecture(folder: Path, content_root: Path):
         out_files.append({'path': rp, 'size': size, 'hash': sha256(f)})
 
     used = {f.resolve() for f in files}
-    unused = [rel(f, folder) for f in iter_files(folder) if f.resolve() not in used and f.name != 'lecture.md']
+    # 演習の元のファイル（exercises/*.md。模範解答を含む）は配信しないのが正しいので数えない
+    unused = [rel(f, folder) for f in iter_files(folder) if f.resolve() not in used and f.name != 'lecture.md'
+              and not (f.parent.name == 'exercises' and f.suffix == '.md')]
     if unused:
         info.append('配信されないファイル（参照されていない）: ' + ', '.join(unused[:8]) + (' …' if len(unused) > 8 else ''))
 
@@ -502,15 +552,23 @@ def build_catalog(use_git=False, content_root=None):
         except ValueError as e:
             site = {}
             print(f'警告: {SITE_JSON} を読めません: {e}', file=sys.stderr)
-    reports, lectures, ids = [], [], {}
-    for folder in find_lectures(content_root):
-        r = scan_lecture(folder, content_root)
+    reports, lectures, ids, roots = [], [], {}, {}
+    folders = [(f, content_root) for f in find_lectures(content_root)]
+    # site.json の "includeDemo": true：Lectoryx の公開デモ教材（lectures/）も混ぜて配信する（教員の確認用。授業の教材と同じ一覧に出る）
+    demo_root = (ROOT / CONTENT).resolve()
+    if site.get('includeDemo') is True and demo_root != content_root:
+        have = {rel(f, content_root) for f, _ in folders}
+        folders += [(f, demo_root) for f in find_lectures(demo_root) if rel(f, demo_root) not in have]
+    for folder, root in folders:
+        r = scan_lecture(folder, root)
         e = r['entry']
         if e['id'] in ids:
             r['errors'].append(f'講義 ID "{e["id"]}" が {ids[e["id"]]} と重複しています（フロントマターの id: を変えてください）')
         ids.setdefault(e['id'], e['path'])
-        e['updated'] = (git_updated(r['abs_files'], content_root) if use_git else None) or mtime_updated(r['abs_files'])
+        e['updated'] = (git_updated(r['abs_files'], root) if use_git else None) or mtime_updated(r['abs_files'])
         reports.append(r)
+        if root != content_root:
+            roots[e['path']] = str(root)
         if not r['draft']:
             lectures.append(e)
     order = {c: i for i, c in enumerate(site.get('courses') or [])}
@@ -522,11 +580,12 @@ def build_catalog(use_git=False, content_root=None):
         'title': site.get('title') or '講義資料',
         'subtitle': site.get('subtitle') or '',
         'demo': site.get('demo') is True,
-        'courses': site.get('courses') or [],
+        'courses': (site.get('courses') or []) + sorted({e['course'] for e in lectures if e['path'] in roots} - set(site.get('courses') or [])),
         'generated': dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'),
         'lectures': lectures,
     }
     catalog['_root'] = str(content_root)
+    catalog['_roots'] = roots          # 教材ルートと違う場所の講義（混ぜたデモ）：パス → 教材ルート
     return catalog, reports
 
 
@@ -564,8 +623,8 @@ def public_catalog(catalog):
 
 
 def copy_lectures(dst_root: Path, catalog):
-    src_root = Path(catalog['_root'])
     for e in catalog['lectures']:
+        src_root = Path(catalog.get('_roots', {}).get(e['path']) or catalog['_root'])
         for f in e['files']:
             dst = dst_root / f['path']
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -578,7 +637,54 @@ def dir_size(d: Path):
     return sum(f.stat().st_size for f in d.rglob('*') if f.is_file())
 
 
-def build_site(out: Path, catalog, app_only=False):
+RUNNER_DIR = 'runner'
+RUNNER_ZIP = 'runner/lectoryx-runner.zip'
+
+
+def site_url(given=None):
+    """公開先のアプリの URL（実行ツールがペアリングで開くページ。接続を許す Origin もここから）。
+    --site-url、なければ GitHub Actions の GITHUB_REPOSITORY（<owner>/<repo> → https://<owner>.github.io/<repo>/）"""
+    if given:
+        return given.rstrip('/') + '/'
+    repo = os.environ.get('GITHUB_REPOSITORY', '')
+    if '/' not in repo:
+        return None
+    owner, name = repo.split('/', 1)
+    host = f'https://{owner.lower()}.github.io'
+    return host + '/' if name.lower() == f'{owner.lower()}.github.io' else f'{host}/{name}/'
+
+
+def runner_zip_bytes(app_url=None, origins=None) -> bytes:
+    """Lectoryx ローカル実行ツール（runner/）の配布用 zip。app_url があれば設定ファイル lectoryx-runner.toml を入れる"""
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        def add(arc, data, mode=0o644):
+            zi = zipfile.ZipInfo('lectoryx-runner/' + arc, date_time=(2026, 1, 1, 0, 0, 0))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.create_system = 3                       # Unix の属性（Mac で start-mac.command を実行できるように）
+            zi.external_attr = (0o100000 | mode) << 16
+            z.writestr(zi, data)
+        for f in iter_files(ROOT / RUNNER_DIR):
+            if f.name == 'lectoryx-runner.toml':
+                continue
+            data = f.read_bytes()
+            if f.suffix in ('.cmd', '.bat'):                # Windows のバッチは CRLF、ほかは LF にそろえる
+                data = data.replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+            elif f.suffix in ('.command', '.sh', '.jl', '.toml', '.md'):
+                data = data.replace(b'\r\n', b'\n')
+            add(rel(f, ROOT / RUNNER_DIR), data, 0o755 if f.suffix in ('.command', '.sh') else 0o644)
+        if app_url:
+            origin = re.match(r'^(https?://[^/]+)', app_url).group(1)
+            ors = origins or [origin]
+            add('lectoryx-runner.toml', (
+                '# 配信元のアプリ（tools/build.py が書く）。ペアリングでこのページを開き、ここからの接続だけを受け付ける\n'
+                f'app = {json.dumps(app_url)}\norigins = [{", ".join(json.dumps(o) for o in ors)}]\n').encode('utf-8'))
+    return buf.getvalue()
+
+
+def build_site(out: Path, catalog, app_only=False, url=None):
     """公開フォルダ（GitHub Pages）。app_only なら教材を含めない（非公開リポジトリ用）"""
     clean_dir(out)
     for p, _ in app_files():
@@ -592,6 +698,9 @@ def build_site(out: Path, catalog, app_only=False):
         cfg.write_text(json.dumps({'contentType': 'github'}, ensure_ascii=False), encoding='utf-8')
         extra.append(('app-config.json', sha256(cfg)[:16]))
     (out / SW_FILE).write_text(render_sw(dev=False, extra=extra), encoding='utf-8')
+    # 学生の PC の Julia で演習を実行するためのツール（ダウンロード用。アプリのオフライン保存の対象ではない）
+    (out / RUNNER_ZIP).parent.mkdir(parents=True, exist_ok=True)
+    (out / RUNNER_ZIP).write_bytes(runner_zip_bytes(url))
     if not app_only:
         copy_lectures(out / CONTENT, catalog)
     (out / '.nojekyll').write_text('', encoding='utf-8')
@@ -617,6 +726,7 @@ def main():
     ap.add_argument('--content-out', help='教材フォルダを作る（非公開リポジトリの dist ブランチ用。例: _content）')
     ap.add_argument('--content-dir', help='教材のフォルダ（既定 lectures/。非公開の教材リポジトリでは courses/ やその CI のチェックアウト先）')
     ap.add_argument('--git-dates', action='store_true', help='更新日時を git の履歴から取る（--out では自動）')
+    ap.add_argument('--site-url', help='公開先のアプリの URL（実行ツールの設定に書く。省略時は GitHub Actions の GITHUB_REPOSITORY から）')
     a = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -629,7 +739,7 @@ def main():
         print('エラーを直してから公開してください。', file=sys.stderr)
         sys.exit(1)
     if a.out:
-        build_site(Path(a.out).resolve(), catalog, app_only=a.app_only)
+        build_site(Path(a.out).resolve(), catalog, app_only=a.app_only, url=site_url(a.site_url))
     if a.content_out:
         build_content(Path(a.content_out).resolve(), catalog)
     if not (a.out or a.content_out or a.check):

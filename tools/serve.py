@@ -11,6 +11,7 @@ Lectoryx の開発用 HTTP サーバ（標準ライブラリのみ）
   （開発用。Service Worker はネットワーク優先で動くので、編集はすぐ反映される）
 ・courses/（実際の授業の教材。別の非公開リポジトリ）があれば、lectures/（公開のデモ）と合わせて
   /lectures/ の下に見せる。授業の教材もアプリから直接確認できる（同じパスなら courses/ が優先）
+・演習の実行ツールの zip（/runner/lectoryx-runner.zip）は、この開発サーバのページから接続できる設定で作る
 ・オフライン機能（Service Worker）は https か localhost でだけ動く。
   LAN の http://192.168.… で iPad から開いた場合は、オンライン専用の確認になる。
 """
@@ -95,6 +96,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     _last_report[0] = summary
                     build.print_report(reports, verbose=False)
                 return self.send_bytes(json.dumps(catalog, ensure_ascii=False).encode('utf-8'), 'application/json; charset=utf-8')
+            if path == '/' + build.RUNNER_ZIP:
+                # 演習の実行ツール（開発用：この開発サーバのページから接続できる設定にする）
+                port = self.server.server_address[1]
+                body = build.runner_zip_bytes(f'http://localhost:{port}/', [f'http://localhost:{port}', f'http://127.0.0.1:{port}'])
+                return self.send_bytes(body, 'application/zip')
         except Exception as e:  # 生成に失敗してもサーバは止めない
             sys.stderr.write(f'[error] {path}: {e}\n')
             self.send_error(500, str(e))
@@ -148,6 +154,7 @@ def main():
             print(f'  iPad から: http://{a}:{port}/')
         print('※ iPad と PC を同じ Wi-Fi に接続してください。つながらない場合はファイアウォールの許可を確認。')
         print('※ オフライン機能（ダウンロード・ホーム画面アプリ）は https（GitHub Pages）か localhost でだけ動きます。')
+        print('※ 演習（Julia）を試すとき：julia runner/lectoryx-runner.jl --app http://localhost:%d/ --allow-origin http://localhost:%d --open' % (port, port))
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

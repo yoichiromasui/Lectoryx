@@ -58,10 +58,40 @@ export async function loadLecture(path, { base } = {}) {
       p.html = `<div class="lw-error">ページの変換に失敗しました: ${escapeHtml(e.message)}</div>`;
     }
   }
-  const pages = await expandPdfPages(parsed.pages, base);
-  const widgets = await loadWidgets(base, parsed.meta.widgets);
+  const [pages, widgets, exercises] = await Promise.all([
+    expandPdfPages(parsed.pages, base),
+    loadWidgets(base, parsed.meta.widgets),
+    loadExercises(base, parsed.pages),
+  ]);
   const id = parsed.meta.id ? String(parsed.meta.id) : path;
-  return { id, path, base: base.href, meta: parsed.meta, pages, renderer, widgets };
+  return { id, path, base: base.href, meta: parsed.meta, pages, renderer, widgets, exercises };
+}
+
+/** @exercise で使う演習（exercises/<id>.json。tools/exercise.py が作る）。読めないものは { error } */
+async function loadExercises(base, pages) {
+  const ids = new Set();
+  for (const p of pages) {
+    let fence = null;
+    for (const line of (p.src || '').split('\n')) {
+      const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (f) { fence = fence ? (line.trim().startsWith(fence) ? null : fence) : f[1]; continue; }
+      const m = !fence && /^@exercise\s+([A-Za-z0-9_-]+)/.exec(line);
+      if (m) ids.add(m[1]);
+    }
+  }
+  const out = {};
+  await Promise.all([...ids].map(async (id) => {
+    try {
+      const res = await fetch(new URL(`exercises/${id}.json`, base), { cache: 'no-cache' });
+      if (!res.ok) throw new Error(`exercises/${id}.json がありません（HTTP ${res.status}）`);
+      const ex = await res.json();
+      if (ex.format !== 'lectoryx-exercise' || ex.id !== id) throw new Error(`exercises/${id}.json の形式が違います`);
+      out[id] = ex;
+    } catch (e) {
+      out[id] = { error: e.message };
+    }
+  }));
+  return out;
 }
 
 /** @pdf のページを PDF の各ページに展開する */

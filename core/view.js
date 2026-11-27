@@ -19,6 +19,7 @@ import { InkInput } from './ink/input.js';
 import { strokesBottom } from './ink/stroke.js';
 import { opBounds, diffStrokes } from './ink/history.js';
 import { mountWidgets } from './widgets/index.js';
+import { mountExercises } from './exercise/card.js';
 import { pdfPageHeight, renderPdfPage, releasePdfCanvas } from './content/pdf.js';
 
 export class PageView extends Emitter {
@@ -116,6 +117,7 @@ export class PageView extends Emitter {
     if (!c.mounted) {
       c.mounted = true;
       c.widgets = mountWidgets(c.el, this.lecture.widgets, this.widgetEnv, this.paramState(page));
+      mountExercises(c.el, this.exerciseState(page));
     }
     this.hl.setStrokes(page.state.strokes);
     this.pen.setStrokes(page.state.strokes);
@@ -284,6 +286,7 @@ export class PageView extends Emitter {
       if (!c.mounted) {
         c.mounted = true;
         c.widgets = mountWidgets(c.el, this.lecture.widgets, this.widgetEnv, this.paramState(page));
+        mountExercises(c.el, this.exerciseState(page));
         for (const w of c.widgets) w.hide();
       }
       const height = c.el.offsetHeight;
@@ -335,6 +338,18 @@ export class PageView extends Emitter {
       set: (key, values) => {
         if (values) page.state.widgets[key] = values;
         else delete page.state.widgets[key];
+        this.book.markDirty(page);
+      },
+    };
+  }
+
+  /** 演習のコードと採点の結果の保存先（ページの state.exercises） */
+  exerciseState(page) {
+    return {
+      lecture: this.lecture,
+      get: (id) => page.state.exercises[id] || null,
+      set: (id, rec) => {
+        page.state.exercises[id] = rec;
         this.book.markDirty(page);
       },
     };
