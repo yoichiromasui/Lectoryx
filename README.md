@@ -383,7 +383,7 @@ export function secondOrderStep(w) {
 
 ### 8.2 PC での自動テスト（開発者向け）
 `python tools/serve.py` を起動した状態で：
-- `http://localhost:8000/tests/smoke.html` … 手書き・消しゴム・Undo・テキスト・ページ移動・回転・PDF 出力・保存などの回帰テスト（**ALL PASSED 114**）
+- `http://localhost:8000/tests/smoke.html` … 手書き・消しゴム・Undo・テキスト・ページ移動・回転・PDF 出力・保存などの回帰テスト（**ALL PASSED 117**）
 - `http://localhost:8000/tests/offline.html` … ダウンロード → ネットワークを遮断した状態でライブラリ・講義・数式・画像・PDF・ウィジェット・書き込み・復元・動画の部分読み込み、教材の更新と旧版の保持、更新の失敗、バックアップと復元（**ALL PASSED 39**）
 - `python tests/e2e_prod.py`（`pip install websocket-client` が必要。Chrome を使用）… GitHub Pages と同じ公開フォルダをサブディレクトリで配信し、実際にサーバを止めて動作確認、アプリの新しい版が押すまで切り替わらないこと、更新後も書き込み・教材が残ることを確認。続けて、教材を GitHub API の代わりの模擬サーバ（別オリジン・トークン必須）から取得する構成を確認（**ALL PASSED 27/27**）
 

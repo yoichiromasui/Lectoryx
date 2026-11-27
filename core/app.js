@@ -321,10 +321,22 @@ function guardPalm(el, view) {
  * 届かないことがある。届かないと「スワイプ中」の状態が残り、以後のスワイプをすべて 2 本目の指と
  * みなして無視してしまう（授業モードの後にスワイプが効かなくなった。2026-11）。
  * 念のため、新しい最初の指が触れたとき・すべての指が離れたときにも、残った状態を捨てる。
+ *
+ * 縦スクロールとの取り合い：ページが 1 画面より少しでも高い（縦にスクロールできる）と、iPad は
+ * 横向きの指の動きでも縦スクロールを始め、スワイプが pointercancel で取り消されて表示が上下に動く
+ * （スライダーのあるページで起きた。2026-11）。そこで
+ *   ・指が 4px 動いた時点で向きを決め、はっきり縦でなければ touchmove を preventDefault して
+ *     縦スクロールを始めさせない（本当に縦に動かしたときは今までどおりスクロールする）
+ *   ・それでもスクロールに取られて pointercancel になったら、タッチイベント（スクロール中も届く）で
+ *     指を離した位置を見て、十分に横へ動いていればページを送る
  */
 function installSwipe({ stage, view, settings }) {
-  let st = null;
+  let st = null;   // スワイプ中の指（Pointer Events）
+  let tt = null;   // 同じ指のタッチ { id, x, y, dx, dy, lock: null|'x'|'y', armed, cancelled, multi }
   const slide = () => settings.get('pageTransition') === 'slide' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  // 指の向き：4px 動いた時点で決める。はっきり縦（縦が横の 1.5 倍超）なら 'y'（スクロール）、それ以外は 'x'（スワイプ）。
+  // Pointer Events とタッチイベントの先に来た方で決め、もう一方も同じ判定を使う。
+  const axisOf = (dx, dy) => (dx * dx + dy * dy < 16 ? null : Math.abs(dy) > Math.abs(dx) * 1.5 ? 'y' : 'x');
   const drop = (why) => {
     if (!st) return;
     st = null;
@@ -344,10 +356,7 @@ function installSwipe({ stage, view, settings }) {
     if (!st || e.pointerId !== st.id || st.multi || !slide() || view.turning) return;
     const dx = e.clientX - st.x;
     const dy = e.clientY - st.y;
-    if (!st.axis) {
-      if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
-      st.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
-    }
+    if (!st.axis) st.axis = axisOf(dx, dy);
     if (st.axis !== 'x') return;
     const canGo = dx < 0 ? view.index < view.book.length - 1 : view.index > 0;
     st.dx = canGo ? dx : dx * 0.25;   // 最初・最後のページでは少しだけ動いて戻る
@@ -373,15 +382,62 @@ function installSwipe({ stage, view, settings }) {
     if (ok) (dx < 0 ? view.next() : view.prev());
   }, true);
   window.addEventListener('pointercancel', (e) => {
-    if (st && e.pointerId === st.id) { st = null; view.slideBack(); }
+    if (st && e.pointerId === st.id) {
+      st = null;
+      view.slideBack();
+      if (tt && tt.armed) tt.cancelled = true;   // ブラウザがスクロールを始めた → 指を離した位置で判定する
+    }
   }, true);
-  // pointerup も pointercancel も届かなかったとき：すべての指が離れたら状態を捨てる
-  // （pointerup は touchend より先に届くので、少し待ってから確かめる）
+
+  // ---- タッチイベント（縦スクロールとの取り合い） ----
+  stage.addEventListener('touchstart', (e) => {
+    const t = e.changedTouches[0];
+    if (e.touches.length !== 1 || t.touchType === 'stylus') {   // 2 本目の指・Apple Pencil
+      if (tt) tt.multi = true;
+      return;
+    }
+    tt = { id: t.identifier, x: t.clientX, y: t.clientY, dx: 0, dy: 0, lock: null, armed: false, cancelled: false, multi: false };
+  }, { passive: true });
+  stage.addEventListener('touchmove', (e) => {
+    if (!tt || tt.multi) return;
+    if (e.touches.length !== 1) { tt.multi = true; return; }
+    const t = e.touches[0];
+    if (t.identifier !== tt.id) return;
+    tt.dx = t.clientX - tt.x;
+    tt.dy = t.clientY - tt.y;
+    if (tt.cancelled) return;
+    if (!tt.armed) {
+      if (!st) return;   // スワイプの対象でない（操作パネル・ドラッグ点の上など）
+      tt.armed = true;
+    }
+    if (!tt.lock && st) {
+      if (!st.axis) st.axis = axisOf(tt.dx, tt.dy);
+      tt.lock = st.axis;
+    }
+    if (tt.lock === 'x' && e.cancelable) e.preventDefault();
+  }, { passive: false });
   for (const type of ['touchend', 'touchcancel']) {
     window.addEventListener(type, (e) => {
-      if (!st || e.touches.length) return;
-      const s = st;
-      setTimeout(() => { if (st === s) drop('すべての指が離れた'); }, 50);
+      if (e.touches.length) return;
+      // スクロールに取られたスワイプ：指を離した位置で判定する
+      const s = tt;
+      tt = null;
+      if (s && s.cancelled && !s.multi && type === 'touchend') {
+        for (const t of e.changedTouches) {
+          if (t.identifier === s.id) { s.dx = t.clientX - s.x; s.dy = t.clientY - s.y; }
+        }
+        const W = stage.clientWidth;
+        if (Math.abs(s.dx) > Math.max(80, W * 0.18) && Math.abs(s.dx) > Math.abs(s.dy) * 1.5 && !view.input.penGuard() && !view.turning) {
+          diag('swipe', 'スクロールに取られたスワイプを、指を離した位置で判定してページ送り', 1000);
+          view.turn(s.dx < 0 ? 1 : -1);
+        }
+      }
+      // pointerup も pointercancel も届かなかったとき：すべての指が離れたら状態を捨てる
+      // （pointerup は touchend より先に届くので、少し待ってから確かめる）
+      if (st) {
+        const p = st;
+        setTimeout(() => { if (st === p) drop('すべての指が離れた'); }, 50);
+      }
     }, true);
   }
 }

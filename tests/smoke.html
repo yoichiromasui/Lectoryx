@@ -415,6 +415,37 @@ async function run() {
     win.dispatchEvent(te);
     await sleep(1200);   // 動作の記録は 1 秒後に保存される
     check('スワイプ：すべての指が離れたら残った状態を捨てて記録する', /スワイプの状態を解除（すべての指が離れた）/.test(win.localStorage.getItem('lw.diag.v1') || ''));
+    // 縦スクロールとの取り合い（ページが少しでも縦にスクロールできると、iPad は横向きの動きでもスクロールを始める）
+    {
+      const P = (type, x, y, pid) => v.stage.dispatchEvent(new win.PointerEvent(type, { bubbles: true, cancelable: true, pointerId: pid, pointerType: 'touch', isPrimary: true, clientX: sr.left + x, clientY: sr.top + y, buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0 }));
+      const T = (type, x, y, id, cancelable = true) => {
+        const t = new win.Touch({ identifier: id, target: v.stage, clientX: sr.left + x, clientY: sr.top + y });
+        const ev = new win.TouchEvent(type, { bubbles: true, cancelable, touches: type === 'touchend' ? [] : [t], changedTouches: [t] });
+        v.stage.dispatchEvent(ev);
+        return ev;
+      };
+      let pid = nextId++;
+      P('pointerdown', 600, 400, pid); T('touchstart', 600, 400, 7);
+      P('pointermove', 594, 406, pid);
+      const m1 = T('touchmove', 594, 406, 7);
+      P('pointerup', 594, 406, pid); T('touchend', 594, 406, 7);
+      check('スワイプ：斜め 45° の動き始めは縦スクロールを始めさせない（touchmove を preventDefault）', m1.defaultPrevented);
+      await sleep(300);
+      pid = nextId++;
+      P('pointerdown', 600, 400, pid); T('touchstart', 600, 400, 8);
+      P('pointermove', 602, 410, pid);
+      const m2 = T('touchmove', 602, 410, 8);
+      P('pointercancel', 602, 410, pid); T('touchmove', 603, 480, 8, false); T('touchend', 603, 480, 8);
+      check('スワイプ：はっきり縦の動きはスクロールに任せる', !m2.defaultPrevented && v.index === 1);
+      await sleep(300);
+      pid = nextId++;
+      P('pointerdown', 900, 400, pid); T('touchstart', 900, 400, 9);
+      P('pointermove', 898, 408, pid); T('touchmove', 898, 408, 9);
+      P('pointercancel', 898, 408, pid);   // ブラウザが縦スクロールを始めた
+      T('touchmove', 600, 420, 9, false); T('touchmove', 300, 430, 9, false); T('touchend', 300, 430, 9);
+      await sleep(450);
+      check('スワイプ：縦スクロールに取られても、指を離した位置が十分横ならページを送る', v.index === 2, `index=${v.index}`);
+    }
     lw().settings.set('pageButtons', false);
     check('設定でページ送りボタンを隠せる', win.getComputedStyle(btns).display === 'none');
     lw().settings.set('pageButtons', true);
